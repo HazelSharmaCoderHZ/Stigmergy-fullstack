@@ -273,21 +273,7 @@ export default function App() {
         }} />
         <StigmergyVisualizer />
         <ElectricityVideoSection />
-        <section id="decisions" className="scroll-mt-20 border-b border-slate-200 bg-white py-10" aria-live="polite">
-          <div className="mx-auto max-w-7xl px-4 sm:px-6 lg:px-8">
-            <p className="text-xs font-semibold uppercase tracking-wider text-blue-700">05 · Safety and decisions</p>
-            <h2 className="mt-1 text-2xl font-semibold tracking-tight text-slate-950">Latest coordination tick</h2>
-            <p className="mt-2 text-sm text-slate-600">Decisions, proposal outcomes, and reasons. Trail readings were sensed before this tick's deposits.</p>
-            {diagnostics.length === 0 ? <p className="mt-3 text-sm text-slate-500">Run a coordination tick to load agent decisions and proposal outcomes.</p> : (
-              <div className="mt-3 overflow-x-auto rounded border border-slate-200 bg-white">
-                <table className="w-full text-left text-xs">
-                  <thead className="bg-slate-100 font-mono uppercase text-slate-500"><tr><th className="p-2">Agent / Bus</th><th className="p-2">Decision</th><th className="p-2">Trail sensed (demand / surplus)</th><th className="p-2">Proposal</th><th className="p-2">Reason</th></tr></thead>
-                  <tbody>{diagnostics.map((item) => <tr key={item.agent_id} className="border-t border-slate-100"><td className="p-2 font-mono">{item.agent_id} / BUS-{String(item.bus_id).padStart(2, '0')}</td><td className="p-2">{item.decision}</td><td className="p-2 font-mono">{item.trail_sensed.demand.toFixed(4)} / {item.trail_sensed.energy_surplus.toFixed(4)}</td><td className="p-2 uppercase">{item.status}{item.proposal_status ? ` / ${item.proposal_status}` : ''}</td><td className="p-2">{item.reason}{item.trail_deposited ? `; deposited for later ticks: ${item.trail_deposited}` : ''}</td></tr>)}</tbody>
-                </table>
-              </div>
-            )}
-          </div>
-        </section>
+        
       </main>
       <Footer />
     </div>

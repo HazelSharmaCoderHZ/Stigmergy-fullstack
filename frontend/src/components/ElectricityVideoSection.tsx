@@ -25,22 +25,24 @@ export const ElectricityVideoSection: React.FC = () => {
   }, []);
 
   return (
-    <section
-      id="electricity"
-      aria-label="Electricity concept video"
-      className="relative flex min-h-screen w-full items-center justify-center bg-slate-950"
-    >
-      <video
-        ref={videoRef}
-        className="fade-in h-screen w-full object-contain"
-        src="/electricity.mp4"
-        autoPlay
-        muted
-        loop
-        playsInline
-        preload="auto"
-        controls={showControls}
-      />
-    </section>
+    
+<section
+  id="electricity"
+  aria-label="Electricity concept video"
+  className="relative h-screen min-h-screen w-full overflow-hidden bg-black"
+>
+  <video
+    ref={videoRef}
+    className="absolute inset-0 h-full w-full object-cover"
+    src="/electricity.mp4"
+    autoPlay
+    muted
+    loop
+    playsInline
+    preload="auto"
+    controls={showControls}
+  />
+</section>
+
   );
 };
