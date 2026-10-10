@@ -1,0 +1,6 @@
+{
+  "name": "Stigmergic Smart Grid",
+  "description": "Multi-agent coordination through intelligent energy environments using digital pheromones and decentralized power flow.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
