@@ -10,11 +10,15 @@ import {
 interface ControlDashboardProps {
   metrics: SystemMetrics;
   history: Array<{ timestamp: string; generation: number; demand: number }>;
+  backendStatus?: 'connecting' | 'connected' | 'error';
+  backendError?: string;
 }
 
 export const ControlDashboard: React.FC<ControlDashboardProps> = ({
   metrics,
   history,
+  backendStatus,
+  backendError = '',
 }) => {
   const timeSeriesData = history;
 
@@ -39,6 +43,15 @@ export const ControlDashboard: React.FC<ControlDashboardProps> = ({
             </h2>
           </div>
 
+          {/* Inline connection state (dashboard-level only, not a global strip) */}
+          <div className="text-right text-[11px] font-mono">
+            {backendStatus === 'connecting' && (
+              <span className="text-amber-700">Connecting to backend…</span>
+            )}
+            {backendStatus === 'error' && (
+              <span className="text-red-700">Backend unreachable: {backendError}</span>
+            )}
+          </div>
         </div>
 
         {/* Backend-reported system measurements */}

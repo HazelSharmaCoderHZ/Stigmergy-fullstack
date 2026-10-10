@@ -48,3 +48,53 @@
 .custom-scrollbar::-webkit-scrollbar-thumb:hover {
   background: #475569;
 }
+
+/* ---- Restrained signal / transition animations ---- */
+
+/* Minimal fade-in used for section transitions. */
+@keyframes fade-in {
+  from { opacity: 0; }
+  to { opacity: 1; }
+}
+.fade-in {
+  animation: fade-in 0.8s ease-out both;
+}
+
+/* Subtle rise for landing content so the mesh stays the backdrop. */
+@keyframes fade-in-up {
+  from { opacity: 0; transform: translateY(8px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+.fade-in-up {
+  animation: fade-in-up 0.6s ease-out both;
+}
+
+/* Brief glow when a coordination tick completes (decorative, not a verdict). */
+@keyframes agent-tick-pulse {
+  0% { box-shadow: 0 0 0 0 rgba(37, 99, 235, 0.32); }
+  100% { box-shadow: 0 0 0 16px rgba(37, 99, 235, 0); }
+}
+.agent-tick-pulse {
+  animation: agent-tick-pulse 0.9s ease-out;
+}
+
+/* Shared-trail signal sweep for the stigmergy section (visual metaphor only). */
+@keyframes trail-sweep {
+  0% { left: -35%; opacity: 0; }
+  12% { opacity: 0.9; }
+  85% { opacity: 0.9; }
+  100% { left: 100%; opacity: 0; }
+}
+.trail-sweep {
+  animation: trail-sweep 2.6s ease-in-out infinite;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .fade-in,
+  .fade-in-up,
+  .agent-tick-pulse,
+  .trail-sweep {
+    animation: none !important;
+  }
+}
+

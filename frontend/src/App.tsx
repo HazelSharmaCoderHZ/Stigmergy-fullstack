@@ -15,6 +15,8 @@ import { StigmergyVisualizer } from './components/StigmergyVisualizer';
 import { ControlDashboard } from './components/ControlDashboard';
 import { AgentNetwork } from './components/AgentNetwork';
 import { Footer } from './components/Footer';
+import { ElectricMeshBackground } from './components/ElectricMeshBackground';
+import { ElectricityVideoSection } from './components/ElectricityVideoSection';
 
 type BackendStatus = 'connecting' | 'connected' | 'error';
 type Snapshot = { timestamp: string; generation: number; demand: number };
@@ -72,6 +74,7 @@ export default function App() {
   const [showAgents, setShowAgents] = useState(true);
   const [selectedNodeId, setSelectedNodeId] = useState<string | null>(null);
   const [activeTab, setActiveTab] = useState('overview');
+  const [tickNonce, setTickNonce] = useState(0);
 
   const applyGridSnapshot = useCallback((snapshot: BackendGridState) => {
     setGrid(snapshot);
@@ -154,6 +157,7 @@ export default function App() {
       setBackendStatus('connected');
       setBackendError('');
       setLastBackendUpdate(new Date());
+      setTickNonce((n) => n + 1);
     } catch (error) {
       setBackendStatus('error');
       setBackendError(error instanceof Error ? error.message : 'Coordination tick failed');
@@ -229,20 +233,6 @@ export default function App() {
 
   return (
     <div className="min-h-screen bg-white text-slate-900 flex flex-col">
-      <section className="border-b border-slate-200 bg-slate-50 px-4 py-3 text-slate-800">
-        <div className="mx-auto flex max-w-7xl flex-wrap items-center justify-between gap-3">
-          <div className="flex items-center gap-2">
-            <span className={`h-2 w-2 rounded-full ${backendStatus === 'connected' ? 'bg-emerald-500' : backendStatus === 'error' ? 'bg-red-500' : 'bg-amber-500'}`} />
-            <span className="text-sm font-semibold">Backend {backendStatus}</span>
-            <span className="text-xs text-slate-400">IEEE-14 power-flow model</span>
-            {tick !== null && <span className="text-xs text-slate-400">Coordination tick: {tick}</span>}
-          </div>
-          {backendStatus === 'error' && <p className="w-full text-xs text-red-700">{backendError}{grid ? ' Showing last successful snapshot.' : ''}</p>}
-          {backendStatus === 'connecting' && <p className="w-full text-xs text-amber-700">Connecting to FastAPI. Measurements are not available yet.</p>}
-          {lastBackendUpdate && <p className="w-full text-xs text-slate-500">Updated {lastBackendUpdate.toLocaleTimeString()}</p>}
-        </div>
-      </section>
-
       <Header
         activeTab={activeTab}
         onSelectTab={handleNavigateToSection}
@@ -255,8 +245,9 @@ export default function App() {
       />
 
       <main className="flex-1">
-        <section id="overview" className="min-h-[58vh] flex items-center border-b border-slate-200 bg-white">
-          <div className="mx-auto w-full max-w-5xl px-6 py-20">
+        <section id="overview" className="relative min-h-[58vh] flex items-center overflow-hidden border-b border-slate-200 bg-white">
+          <ElectricMeshBackground />
+          <div className="fade-in-up relative z-10 mx-auto w-full max-w-5xl px-6 py-20">
             <p className="mb-4 text-xs font-semibold uppercase tracking-[0.18em] text-blue-700">Research prototype · IEEE-14</p>
             <h1 className="max-w-3xl text-4xl font-semibold tracking-tight text-slate-950 sm:text-5xl">StigGrid: stigmergic coordination for power systems</h1>
             <p className="mt-6 max-w-2xl text-lg leading-8 text-slate-600">Bus agents sense local voltage and shared decaying trails. Proposed generator setpoints are evaluated by a SafetyGate before accepted changes are applied.</p>
@@ -272,14 +263,16 @@ export default function App() {
           onToggleEnergyFlow={() => setShowEnergyFlow((value) => !value)}
           onToggleAgents={() => setShowAgents((value) => !value)}
           onTriggerSurge={() => void handleRunTick()} tickPending={tickPending}
+          tickNonce={tickNonce}
         />
-        <ControlDashboard metrics={metrics} history={history} />
-        <AgentNetwork agents={agents} nodes={displayNodes} onSelectNode={(node) => {
+        <ControlDashboard metrics={metrics} history={history} backendStatus={backendStatus} backendError={backendError} />
+        <AgentNetwork agents={agents} nodes={displayNodes} tickNonce={tickNonce} onSelectNode={(node) => {
           if (!node) return;
           setSelectedNodeId(node.id);
           handleNavigateToSection('live-grid');
         }} />
         <StigmergyVisualizer />
+        <ElectricityVideoSection />
         <section id="decisions" className="scroll-mt-20 border-b border-slate-200 bg-white py-10" aria-live="polite">
           <div className="mx-auto max-w-7xl px-4 sm:px-6 lg:px-8">
             <p className="text-xs font-semibold uppercase tracking-wider text-blue-700">05 · Safety and decisions</p>

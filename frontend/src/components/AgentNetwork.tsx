@@ -1,17 +1,31 @@
-import React from 'react';
+import React, { useEffect, useState } from 'react';
 import { Agent, GridNode } from '../types/grid';
 
 interface AgentNetworkProps {
   agents: Agent[];
   nodes: GridNode[];
+  tickNonce?: number;
   onSelectNode: (node: GridNode | null) => void;
 }
 
 export const AgentNetwork: React.FC<AgentNetworkProps> = ({
   agents,
   nodes,
+  tickNonce,
   onSelectNode,
 }) => {
+  const [pulseKey, setPulseKey] = useState(0);
+  const [pulsing, setPulsing] = useState(false);
+
+  // Brief, decorative glow whenever a coordination tick completes
+  // (signals activity only — not an acceptance verdict from the SafetyGate).
+  useEffect(() => {
+    if (tickNonce === undefined) return;
+    setPulseKey((key) => key + 1);
+    setPulsing(true);
+    const id = window.setTimeout(() => setPulsing(false), 900);
+    return () => window.clearTimeout(id);
+  }, [tickNonce]);
   const getNodeName = (zoneNodeId: string) => {
     const node = nodes.find((n) => n.id === zoneNodeId);
     return node ? `${node.zoneCode} (${node.name})` : zoneNodeId;
@@ -39,7 +53,7 @@ export const AgentNetwork: React.FC<AgentNetworkProps> = ({
         </div>
 
         {/* Agent Cards Grid */}
-        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-3">
+        <div key={pulseKey} className={`grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-3 ${pulsing ? 'agent-tick-pulse' : ''}`}>
           {agents.map((agent) => {
             const currentNode = nodes.find((n) => n.id === agent.currentZoneId);
 

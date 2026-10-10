@@ -102,6 +102,11 @@ export const StigmergyVisualizer: React.FC = () => {
           </div>
         </div>
 
+        {/* Shared-trail signal sweep (visual metaphor for propagation only) */}
+        <div aria-hidden="true" className="relative h-px w-full overflow-hidden rounded-full bg-slate-200">
+          <span className="trail-sweep absolute top-0 h-px w-40 bg-gradient-to-r from-transparent via-cyan-500 to-transparent" />
+        </div>
+
         {/* The 6-Step Visual Process Timeline */}
         <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-6 gap-2">
           {steps.map((s, index) => {
@@ -130,7 +135,7 @@ export const StigmergyVisualizer: React.FC = () => {
         </div>
 
           {/* Right Explanation Column */}
-        <div className="max-w-3xl space-y-4 border-y border-slate-200 py-5">
+        <div key={activeStep} className="fade-in-up max-w-3xl space-y-4 border-y border-slate-200 py-5">
             <div className="space-y-1">
                 <span className="text-xs font-mono text-blue-700 uppercase tracking-widest">
                 Step {steps[activeStep].stepNumber}

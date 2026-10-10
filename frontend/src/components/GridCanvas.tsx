@@ -16,6 +16,7 @@ interface GridCanvasProps {
   onToggleEnergyFlow?: () => void;
   onToggleAgents?: () => void;
   compactHeroMode?: boolean;
+  tickNonce?: number;
 }
 
 interface Particle {
@@ -28,6 +29,21 @@ interface Particle {
   speed: number;
   color: string;
   size: number;
+}
+
+interface LinePulse {
+  linkId: string;
+  progress: number;
+  speed: number;
+}
+
+interface PulseRing {
+  x: number;
+  y: number;
+  radius: number;
+  maxRadius: number;
+  alpha: number;
+  color: string;
 }
 
 export const GridCanvas: React.FC<GridCanvasProps> = ({
@@ -44,6 +60,7 @@ export const GridCanvas: React.FC<GridCanvasProps> = ({
   onToggleEnergyFlow,
   onToggleAgents,
   compactHeroMode = false,
+  tickNonce,
 }) => {
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
   const containerRef = useRef<HTMLDivElement | null>(null);
@@ -80,6 +97,11 @@ export const GridCanvas: React.FC<GridCanvasProps> = ({
 
   // Active particle system for energy flow
   const particlesRef = useRef<Particle[]>([]);
+  // Subtle pulse travelling along each corridor
+  const linePulsesRef = useRef<LinePulse[]>([]);
+  // Expanding rings emitted when a coordination tick completes
+  const ringsRef = useRef<PulseRing[]>([]);
+  const lastTickRef = useRef<number>(0);
 
   // Initialize and animate canvas
   useEffect(() => {
@@ -89,6 +111,7 @@ export const GridCanvas: React.FC<GridCanvasProps> = ({
     if (!ctx) return;
 
     let animationFrameId: number;
+    const reducedMotion = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
 
     // Helper to get pixel coords from 0-100 percentage
     const getCoords = (node: GridNode) => ({
@@ -123,6 +146,15 @@ export const GridCanvas: React.FC<GridCanvasProps> = ({
         }
       });
       particlesRef.current = newParticles;
+    }
+
+    // One subtle decorative pulse per transmission corridor (no flow direction implied).
+    if (linePulsesRef.current.length !== links.length) {
+      linePulsesRef.current = links.map((link, index) => ({
+        linkId: link.id,
+        progress: ((index * 47) % 100) / 100,
+        speed: 0.0012,
+      }));
     }
 
     // Main animation loop
@@ -252,6 +284,36 @@ export const GridCanvas: React.FC<GridCanvasProps> = ({
         });
       }
 
+      // 3b. Subtle pulse effects along transmission corridors (decorative metaphor).
+      if (showEnergyFlow && !reducedMotion) {
+        linePulsesRef.current.forEach((p) => {
+          const link = links.find((l) => l.id === p.linkId);
+          if (!link) return;
+          const sNode = nodeMap.get(link.source);
+          const tNode = nodeMap.get(link.target);
+          if (!sNode || !tNode) return;
+          const sCoord = getCoords(sNode);
+          const tCoord = getCoords(tNode);
+
+          p.progress += p.speed;
+          if (p.progress >= 1) p.progress -= 1;
+
+          const px = sCoord.x + (tCoord.x - sCoord.x) * p.progress;
+          const py = sCoord.y + (tCoord.y - sCoord.y) * p.progress;
+          const alpha = Math.sin(p.progress * Math.PI) * 0.3;
+          if (alpha <= 0.01) return;
+
+          const isDimmed = selectedNodeId && link.source !== selectedNodeId && link.target !== selectedNodeId;
+          const glow = ctx.createRadialGradient(px, py, 0, px, py, 9);
+          glow.addColorStop(0, `rgba(59, 130, 246, ${isDimmed ? alpha * 0.4 : alpha})`);
+          glow.addColorStop(1, 'rgba(59, 130, 246, 0)');
+          ctx.fillStyle = glow;
+          ctx.beginPath();
+          ctx.arc(px, py, 9, 0, Math.PI * 2);
+          ctx.fill();
+        });
+      }
+
       // 4. Draw Autonomous Agent Markers & Sensing Radii
       if (showAgents) {
         agents.forEach((agent) => {
@@ -288,6 +350,23 @@ export const GridCanvas: React.FC<GridCanvasProps> = ({
         });
       }
 
+      // 5. Expanding coordination-tick pulses (decorative; not an acceptance verdict).
+      if (!reducedMotion) {
+        ringsRef.current = ringsRef.current.filter(
+          (ring) => ring.radius < ring.maxRadius && ring.alpha > 0.02,
+        );
+        ringsRef.current.forEach((ring) => {
+          ring.radius += 2.2;
+          const progress = Math.min(1, ring.radius / ring.maxRadius);
+          ring.alpha = 0.32 * (1 - progress);
+          ctx.beginPath();
+          ctx.arc(ring.x, ring.y, ring.radius, 0, Math.PI * 2);
+          ctx.strokeStyle = `rgba(${ring.color}, ${Math.max(0, ring.alpha)})`;
+          ctx.lineWidth = 1.5;
+          ctx.stroke();
+        });
+      }
+
       animationFrameId = requestAnimationFrame(render);
     };
 
@@ -297,6 +376,34 @@ export const GridCanvas: React.FC<GridCanvasProps> = ({
       cancelAnimationFrame(animationFrameId);
     };
   }, [dimensions, links, nodeMap, nodes, selectedNodeId, showAgents, showEnergyFlow, showPheromones, activeSignals, agents]);
+
+  // Spawn expanding pulses at agent positions whenever a coordination tick completes.
+  useEffect(() => {
+    if (tickNonce === undefined || tickNonce === lastTickRef.current) return;
+    if (window.matchMedia('(prefers-reduced-motion: reduce)').matches) return;
+    lastTickRef.current = tickNonce;
+
+    const origins: GridNode[] = [];
+    agents.forEach((agent) => {
+      const n = nodeMap.get(agent.currentZoneId);
+      if (n) origins.push(n);
+    });
+    if (origins.length === 0) nodes.forEach((n) => origins.push(n));
+
+    const count = Math.min(origins.length, 6);
+    for (let i = 0; i < count; i++) {
+      const n = origins[(i * 3) % origins.length];
+      if (!n) continue;
+      ringsRef.current.push({
+        x: (n.x / 100) * dimensions.width,
+        y: (n.y / 100) * dimensions.height,
+        radius: 8,
+        maxRadius: 36 + Math.random() * 22,
+        alpha: 0.32,
+        color: i % 2 === 0 ? '34, 211, 238' : '59, 130, 246',
+      });
+    }
+  }, [tickNonce, agents, nodeMap, nodes, dimensions]);
 
   // Node icon resolver
   const getNodeIcon = (type: GridNode['type']) => {

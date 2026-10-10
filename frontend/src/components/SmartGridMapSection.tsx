@@ -17,6 +17,7 @@ interface SmartGridMapSectionProps {
   onToggleAgents: () => void;
   onTriggerSurge: () => void;
   tickPending?: boolean;
+  tickNonce?: number;
 }
 
 export const SmartGridMapSection: React.FC<SmartGridMapSectionProps> = ({
@@ -33,6 +34,7 @@ export const SmartGridMapSection: React.FC<SmartGridMapSectionProps> = ({
   onToggleAgents,
   onTriggerSurge,
   tickPending = false,
+  tickNonce,
 }) => {
   const [zoneTypeFilter, setZoneTypeFilter] = useState<string>('all');
 
@@ -103,6 +105,7 @@ export const SmartGridMapSection: React.FC<SmartGridMapSectionProps> = ({
               onToggleEnergyFlow={onToggleEnergyFlow}
               onToggleAgents={onToggleAgents}
               compactHeroMode={false}
+              tickNonce={tickNonce}
             />
 
             {/* Quick Actions Panel below Canvas */}
