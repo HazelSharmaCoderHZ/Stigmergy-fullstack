@@ -1,0 +1,8 @@
+fastapi
+uvicorn[standard]
+pandapower
+numpy
+pandas
+scipy
+pydantic
+pydantic-settings
