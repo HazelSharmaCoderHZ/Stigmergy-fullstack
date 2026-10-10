@@ -66,7 +66,6 @@ export default function App() {
   const [lastBackendUpdate, setLastBackendUpdate] = useState<Date | null>(null);
   const [tick, setTick] = useState<number | null>(null);
   const [tickPending, setTickPending] = useState(false);
-  const [pollingPaused, setPollingPaused] = useState(false);
   const tickInFlight = useRef(false);
   const readInFlight = useRef(false);
   const [showPheromones, setShowPheromones] = useState(true);
@@ -88,32 +87,13 @@ export default function App() {
     ].slice(-50));
   }, []);
 
-  const refreshBackend = useCallback(async () => {
-    if (readInFlight.current) return;
-    readInFlight.current = true;
-    setBackendStatus('connecting');
-    try {
-      const [gridState, agentState] = await Promise.all([getGridState(), getAgentState()]);
-      applyGridSnapshot(gridState);
-      setAgents(mapAgents(agentState.agents));
-      setBackendStatus('connected');
-      setBackendError('');
-      setLastBackendUpdate(new Date());
-    } catch (error) {
-      setBackendStatus('error');
-      setBackendError(error instanceof Error ? error.message : 'Unable to connect to backend');
-    } finally {
-      readInFlight.current = false;
-    }
-  }, [applyGridSnapshot]);
-
   // Read-only polling is sequential; a slow request cannot overlap the next poll.
   useEffect(() => {
     let active = true;
     let timer: number | undefined;
 
     const poll = async () => {
-      if (!active || pollingPaused) return;
+      if (!active) return;
       if (readInFlight.current) {
         timer = window.setTimeout(() => void poll(), 250);
         return;
@@ -142,7 +122,7 @@ export default function App() {
       active = false;
       if (timer !== undefined) window.clearTimeout(timer);
     };
-  }, [applyGridSnapshot, pollingPaused]);
+  }, [applyGridSnapshot]);
 
   const handleRunTick = useCallback(async () => {
     if (tickInFlight.current || readInFlight.current || backendStatus !== 'connected') return;
@@ -236,12 +216,6 @@ export default function App() {
       <Header
         activeTab={activeTab}
         onSelectTab={handleNavigateToSection}
-        frequencyHz={undefined}
-        isPaused={pollingPaused}
-        onTogglePause={() => setPollingPaused((paused) => !paused)}
-        onResetGrid={() => void refreshBackend()}
-        onTriggerSurge={() => void handleRunTick()}
-        tickPending={tickPending}
       />
 
       <main className="flex-1">
@@ -249,9 +223,9 @@ export default function App() {
           <ElectricMeshBackground />
           <div className="fade-in-up relative z-10 mx-auto w-full max-w-5xl px-6 py-20">
             <p className="mb-4 text-xs font-semibold uppercase tracking-[0.18em] text-blue-700">Research prototype · IEEE-14</p>
-            <h1 className="max-w-3xl text-4xl font-semibold tracking-tight text-slate-950 sm:text-5xl">StigGrid: stigmergic coordination for power systems</h1>
-            <p className="mt-6 max-w-2xl text-lg leading-8 text-slate-600">Bus agents sense local voltage and shared decaying trails. Proposed generator setpoints are evaluated by a SafetyGate before accepted changes are applied.</p>
-            <p className="mt-5 text-sm text-slate-500">Use Grid to inspect live measurements and Agents to review the current agent states. Coordination ticks are requested explicitly.</p>
+            <h1 className="max-w-3xl text-4xl font-semibold tracking-tight text-slate-950 sm:text-5xl">StigGrid: agents that coordinate through shared grid signals</h1>
+            <p className="mt-6 max-w-2xl text-lg leading-8 text-slate-600">Stigmergy means agents coordinate by leaving signals in a shared memory that gradually fades. Each agent reads local voltage and those trail signals, then may propose a small generator change. SafetyGate checks every proposal against grid safety limits before it is applied.</p>
+            <p className="mt-5 text-sm text-slate-500">Open Grid for live IEEE-14 measurements. Open Agents to run a coordination tick and inspect decisions.</p>
             <button onClick={() => handleNavigateToSection('live-grid')} className="mt-8 border border-blue-700 px-4 py-2 text-sm font-medium text-blue-800 hover:bg-blue-50">Open grid</button>
           </div>
         </section>
@@ -265,8 +239,8 @@ export default function App() {
           onTriggerSurge={() => void handleRunTick()} tickPending={tickPending}
           tickNonce={tickNonce}
         />
-        <ControlDashboard metrics={metrics} history={history} backendStatus={backendStatus} backendError={backendError} />
-        <AgentNetwork agents={agents} nodes={displayNodes} tickNonce={tickNonce} onSelectNode={(node) => {
+        <ControlDashboard metrics={metrics} history={history} backendStatus={backendStatus} backendError={backendError} tickNonce={tickNonce} />
+        <AgentNetwork agents={agents} nodes={displayNodes} tickNonce={tickNonce} onRunTick={() => void handleRunTick()} tickPending={tickPending} onSelectNode={(node) => {
           if (!node) return;
           setSelectedNodeId(node.id);
           handleNavigateToSection('live-grid');

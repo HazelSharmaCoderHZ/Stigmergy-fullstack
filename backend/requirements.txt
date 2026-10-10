@@ -6,3 +6,4 @@ pandas
 scipy
 pydantic
 pydantic-settings
+python-dotenv

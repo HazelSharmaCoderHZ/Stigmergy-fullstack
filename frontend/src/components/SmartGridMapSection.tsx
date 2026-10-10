@@ -149,8 +149,12 @@ export const SmartGridMapSection: React.FC<SmartGridMapSectionProps> = ({
                       onClick={() => onSelectNode(n)}
                       className={`flex items-center justify-between p-2 text-xs font-mono cursor-pointer transition-colors ${
                         isCurrent
-                          ? 'bg-blue-50 text-blue-900 border border-blue-300'
-                          : 'text-slate-700 hover:bg-slate-50 border border-slate-200'
+                          ? n.status === 'warning'
+                            ? 'bg-red-50 text-red-900 border border-red-200'
+                            : 'bg-green-50 text-green-900 border border-green-200'
+                          : n.status === 'warning'
+                            ? 'text-red-900 hover:bg-red-50 border border-red-100'
+                            : 'text-green-900 hover:bg-green-50 border border-green-100'
                       }`}
                     >
                       <div className="flex items-center gap-2 truncate">
@@ -161,7 +165,7 @@ export const SmartGridMapSection: React.FC<SmartGridMapSectionProps> = ({
                         <span className="text-slate-500">
                           {n.voltagePU?.toFixed(3) ?? '—'}
                         </span>
-                        <span className="w-1.5 h-1.5 rounded-full bg-blue-700" />
+                        <span className={`w-1.5 h-1.5 rounded-full ${n.status === 'warning' ? 'bg-red-600' : 'bg-green-600'}`} />
                       </div>
                     </div>
                   );

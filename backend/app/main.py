@@ -2,7 +2,7 @@ import math
 from dataclasses import asdict
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi import FastAPI, HTTPException
-from app.trail.model import PheromoneType
+from pydantic import BaseModel
 from app.grid.environment import GridEnvironment
 from app.models.grid import GridState
 from app.models.actions import (
@@ -12,6 +12,7 @@ from app.models.actions import (
 from app.safety.safety_gate import SafetyGate
 from app.agents.grid_agent import GridAgent
 from app.trail.memory import TrailMemory
+from app.ai_analyst import AiUnavailable, analyze_snapshot, is_configured, setup_message
 
 
 app = FastAPI(
@@ -58,6 +59,7 @@ agents = [
 ]
 
 coordination_tick = 0
+last_analyst_snapshot = None
 
 
 @app.get("/")
@@ -108,6 +110,85 @@ def get_agent_states():
 
 # Conservative experimental setpoint change per coordination tick.
 GENERATOR_STEP_MW = 1.0
+
+
+def _as_dict(value):
+    if hasattr(value, "model_dump"):
+        return value.model_dump()
+    if hasattr(value, "__dict__") and not isinstance(value, dict):
+        return {
+            key: getattr(value, key)
+            for key in (
+                "converged",
+                "total_generation_mw",
+                "total_load_mw",
+                "min_voltage_pu",
+                "max_voltage_pu",
+                "max_line_loading_percent",
+                "buses",
+                "lines",
+            )
+            if hasattr(value, key)
+        }
+    return dict(value) if value else {}
+
+
+def summarize_grid(grid) -> dict:
+    """Compact grid facts for the analyst. Omits the full bus/line tables."""
+    data = _as_dict(grid)
+    buses = data.get("buses") or []
+    lines = data.get("lines") or []
+
+    def bus_row(bus):
+        return bus if isinstance(bus, dict) else {
+            "id": getattr(bus, "id", None),
+            "voltage_pu": getattr(bus, "voltage_pu", None),
+        }
+
+    def line_row(line):
+        return line if isinstance(line, dict) else {
+            "id": getattr(line, "id", None),
+            "from_bus": getattr(line, "from_bus", None),
+            "to_bus": getattr(line, "to_bus", None),
+            "loading_percent": getattr(line, "loading_percent", None),
+        }
+
+    voltage_issues = []
+    for bus in buses:
+        row = bus_row(bus)
+        voltage = row.get("voltage_pu")
+        if voltage is None:
+            continue
+        if voltage < 0.95 or voltage > 1.05:
+            voltage_issues.append({
+                "bus_id": row.get("id"),
+                "voltage_pu": round(float(voltage), 4),
+            })
+
+    line_issues = []
+    for line in lines:
+        row = line_row(line)
+        loading = row.get("loading_percent")
+        if loading is None:
+            continue
+        if float(loading) >= 80:
+            line_issues.append({
+                "id": row.get("id"),
+                "from_bus": row.get("from_bus"),
+                "to_bus": row.get("to_bus"),
+                "loading_percent": round(float(loading), 2),
+            })
+
+    return {
+        "converged": data.get("converged"),
+        "total_generation_mw": data.get("total_generation_mw"),
+        "total_load_mw": data.get("total_load_mw"),
+        "min_voltage_pu": data.get("min_voltage_pu"),
+        "max_voltage_pu": data.get("max_voltage_pu"),
+        "max_line_loading_percent": data.get("max_line_loading_percent"),
+        "voltage_outside_0.95_1.05_pu": voltage_issues[:8],
+        "lines_loading_ge_80pct": line_issues[:8],
+    }
 
 
 def get_generator_for_bus(bus_id: int):
@@ -184,9 +265,13 @@ def propose_generator_target(agent):
     }, None
 
 
+class AnalystRequest(BaseModel):
+    question: str | None = None
+
+
 @app.post("/api/coordination/tick")
 def run_coordination_tick():
-    global coordination_tick
+    global coordination_tick, last_analyst_snapshot
 
     try:
         # 1. Calculate the current electrical state.
@@ -217,20 +302,16 @@ def run_coordination_tick():
             for agent in agents
         }
 
-        # 5. Deposit signals for subsequent coordination.
-        trail_deposited = {}
-        for agent in agents:
-            deposited_type = agent.deposit_signal(trail_memory)
-            trail_deposited[agent.state.agent_id] = deposited_type
-
-        # 6. Convert eligible proposals into safety-gated actions.
+        # 5. Convert eligible proposals into safety-gated actions.
         action_log = []
         proposal_diagnostics = []
+        proposal_outcomes = {}
 
         for agent in agents:
             proposal, skip_reason = propose_generator_target(agent)
 
             if proposal is None:
+                proposal_outcomes[agent.state.agent_id] = "skipped"
                 proposal_diagnostics.append({
                     "agent_id": agent.state.agent_id,
                     "bus_id": agent.state.current_zone_id,
@@ -238,7 +319,7 @@ def run_coordination_tick():
                     "status": "skipped",
                     "reason": skip_reason,
                     "trail_sensed": trail_sensed[agent.state.agent_id],
-                    "trail_deposited": trail_deposited[agent.state.agent_id],
+                    "trail_deposited": None,
                 })
                 continue
 
@@ -256,9 +337,14 @@ def run_coordination_tick():
             else:
                 result_data = dict(result)
 
+            accepted = result_data.get("accepted", False)
+            proposal_outcomes[agent.state.agent_id] = (
+                "accepted" if accepted else "rejected"
+            )
+
             action_log.append({
                 **proposal,
-                "accepted": result_data.get("accepted", False),
+                "accepted": accepted,
                 "reason": result_data.get("reason", "No reason returned"),
                 "result": result_data,
             })
@@ -268,18 +354,49 @@ def run_coordination_tick():
                 "decision": agent.state.action,
                 "generator_id": proposal["generator_id"],
                 "target_p_mw": proposal["target_p_mw"],
-                "status": "accepted" if result_data.get("accepted") else "rejected",
+                "status": "accepted" if accepted else "rejected",
                 "proposal_status": "evaluated",
                 "reason": result_data.get("reason", "No reason returned"),
                 "trail_sensed": trail_sensed[agent.state.agent_id],
-                "trail_deposited": trail_deposited[agent.state.agent_id],
+                "trail_deposited": None,
             })
+
+        # 6. Deposits follow proposal outcomes. Do not deposit a surplus
+        # correction signal when the corresponding action did not succeed.
+        trail_deposited = {}
+        diagnostic_by_agent = {
+            item["agent_id"]: item for item in proposal_diagnostics
+        }
+        for agent in agents:
+            outcome = proposal_outcomes.get(agent.state.agent_id)
+            if (
+                agent.state.sensed_signal == "HIGH_VOLTAGE"
+                and outcome in {"skipped", "rejected"}
+            ):
+                deposited_type = None
+            else:
+                deposited_type = agent.deposit_signal(trail_memory)
+            trail_deposited[agent.state.agent_id] = deposited_type
+            diagnostic_by_agent[agent.state.agent_id]["trail_deposited"] = deposited_type
 
         # 7. Recalculate the final state after all accepted actions.
         grid_environment.run_power_flow()
         final_grid_state = grid_environment.get_grid_state()
 
         coordination_tick += 1
+
+        last_analyst_snapshot = {
+            "tick": coordination_tick,
+            "before": summarize_grid(grid_state),
+            "after": summarize_grid(final_grid_state),
+            "proposal_diagnostics": proposal_diagnostics,
+            "safety_gate_enabled": True,
+            "generator_step_mw": GENERATOR_STEP_MW,
+            "note": (
+                "Eligible generator proposals were evaluated by the "
+                "SafetyGate. Only accepted actions were committed."
+            ),
+        }
 
         return {
             "tick": coordination_tick,
@@ -318,3 +435,34 @@ def run_coordination_tick():
             status_code=500,
             detail=f"Coordination tick failed: {exc}",
         )
+
+
+@app.post("/api/ai/analyze")
+def analyze_latest_tick(payload: AnalystRequest = AnalystRequest()):
+    question = payload.question if payload else None
+
+    if last_analyst_snapshot is None:
+        raise HTTPException(
+            status_code=400,
+            detail=(
+                "No coordination tick has been run yet. "
+                "Run a coordination tick, then ask the analyst."
+            ),
+        )
+
+    if not is_configured():
+        raise HTTPException(status_code=503, detail=setup_message())
+
+    try:
+        analysis = analyze_snapshot(last_analyst_snapshot, question)
+    except AiUnavailable as exc:
+        raise HTTPException(
+            status_code=503,
+            detail=str(exc),
+        ) from exc
+
+    return {
+        "available": True,
+        "tick": last_analyst_snapshot.get("tick"),
+        **analysis,
+    }

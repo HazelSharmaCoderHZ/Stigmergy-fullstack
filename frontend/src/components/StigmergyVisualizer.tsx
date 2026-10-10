@@ -7,81 +7,63 @@ export const StigmergyVisualizer: React.FC = () => {
   const steps = [
     {
       stepNumber: '01',
-      title: 'Localized Environmental Sensing',
+      title: 'Sense local voltage',
       agent: 'Grid monitor agent',
-      location: 'Assigned IEEE-14 bus',
-      condition: 'Local voltage or sensed demand / surplus trail',
+      location: 'Its assigned IEEE-14 bus',
+      condition: 'Each coordination tick',
       description:
-        'Each backend agent reads voltage at its assigned bus. The current agent does not sense line thermal loading.',
-      signalEmitted: 'DEMAND_SIGNAL',
-      signalColor: 'text-amber-500',
-      badgeColor: 'border-amber-300 bg-amber-50 text-amber-800',
-      action: 'The agent classifies its local voltage condition.',
+        'Each agent reads voltage at its own bus. It then labels the bus as low, high, or normal. This agent does not read line loading.',
+      action: 'Local voltage is the first fact the agent uses.',
     },
     {
       stepNumber: '02',
-      title: 'Shared Trail Deposit',
+      title: 'Leave a trail signal',
       agent: 'Agent assigned to the bus',
-      location: 'Shared trail memory keyed by bus and signal type',
-      condition: 'Tick-end deposit from local voltage state',
+      location: 'Shared trail memory',
+      condition: 'After the agent classifies its voltage',
       description:
-        'The backend stores deposits in shared trail memory. Agents do not message each other directly.',
-      signalEmitted: 'DEMAND_SIGNAL or ENERGY_SURPLUS',
-      signalColor: 'text-rose-500',
-      badgeColor: 'border-rose-300 bg-rose-50 text-rose-800',
-      action: 'Deposits are sensed on a later coordination tick.',
+        'The agent writes a demand or surplus signal into shared memory. Other agents do not receive a direct message. They will read this trail later.',
+      action: 'A later tick is when neighbors can sense this deposit.',
     },
     {
       stepNumber: '03',
-      title: 'Neighborhood Sensing & Trail Decay',
+      title: 'Read nearby trails as they fade',
       agent: 'Shared trail memory',
-      location: 'Depositing bus and directly connected buses',
-      condition: 'Neighbor sensing with attenuation and temporal decay',
+      location: 'The depositing bus and its neighbors',
+      condition: 'Neighbor sensing with decay over time',
       description:
-        'Signals remain keyed to their deposit bus. A neighbor senses them at configured attenuation; the API does not return a spatial trail field.',
-      signalEmitted: 'Demand / surplus trail values',
-      signalColor: 'text-orange-500',
-      badgeColor: 'border-orange-300 bg-orange-50 text-orange-800',
-      action: 'Sensed values are included in agent metadata and tick diagnostics.',
+        'Signals stay attached to the bus that wrote them. A neighbor sees a weaker copy. Signals fade over time so old conditions do not linger forever.',
+      action: 'Sensed trail values are stored with the agent and in tick diagnostics.',
     },
     {
       stepNumber: '04',
-      title: 'Trail-informed Agent Decision',
+      title: 'Decide from voltage and trails',
       agent: 'One agent per bus',
       location: 'Current bus and direct neighbors',
-      condition: 'Decision uses local voltage and sensed trail',
+      condition: 'Local voltage plus sensed demand or surplus',
       description:
-        'Agents read existing trail values before current-tick deposits, then decide from local voltage and sensed demand or surplus.',
-      signalEmitted: 'Trail-informed decision',
-      signalColor: 'text-blue-600',
-      badgeColor: 'border-blue-300 bg-blue-50 text-blue-800',
-      action: 'No direct agent-to-agent messaging is used.',
+        'Stigmergy means agents coordinate by leaving signals in a shared memory that gradually fades. On this step, the agent first reads existing trail values (not the deposit it is about to write). It then combines those values with its local voltage and chooses an action, such as raise support, reduce generation, or keep monitoring.',
+      action: 'This is only a local decision. It is not applied to the grid yet.',
     },
     {
       stepNumber: '05',
-      title: 'Generator Setpoint Proposal',
-      agent: 'Agent on a controllable generator bus',
-      location: 'In-service net.gen row on its assigned bus',
-      condition: 'Eligible decision and in-service generator at this bus',
+      title: 'Propose a generator change',
+      agent: 'Agent on a bus that has a generator',
+      location: 'The in-service generator on that same bus',
+      condition: 'The decision asks for a setpoint change and a generator is available',
       description:
-        'Eligible decisions map to a generator at that same bus. This path does not reroute lines or dispatch a battery.',
-      signalEmitted: 'Discrete +/-1 MW proposal',
-      signalColor: 'text-emerald-600',
-      badgeColor: 'border-emerald-300 bg-emerald-50 text-emerald-800',
-      action: 'Buses without an in-service generator remain monitors for this action path.',
+        'If the decision needs a generator change, the agent proposes a 1 MW increase or decrease on its own bus. It does not reroute lines or control a battery. Buses without a generator stay as monitors.',
+      action: 'The proposal is sent to SafetyGate. It is not applied yet.',
     },
     {
       stepNumber: '06',
-      title: 'SafetyGate Evaluation',
+      title: 'SafetyGate checks the proposal',
       agent: 'SafetyGate',
-      location: 'Candidate IEEE-14 network copy',
-      condition: 'Candidate power flow and non-worsening constraint checks',
+      location: 'A copy of the IEEE-14 network',
+      condition: 'A candidate power flow must not worsen safety limits',
       description:
-        'The SafetyGate commits only accepted candidates. Existing voltage or loading violations can remain.',
-      signalEmitted: 'Accepted or rejected proposal',
-      signalColor: 'text-blue-500',
-      badgeColor: 'border-blue-300 bg-blue-50 text-blue-800',
-      action: 'Inspect tick diagnostics for the actual decision and gate result.',
+        'SafetyGate means every proposed change is checked against grid safety limits before it is applied. Only accepted proposals are committed. Existing voltage or loading problems can remain if the change would not make them worse.',
+      action: 'Open Safety and Decisions, or tick diagnostics, to see accept or reject results.',
     },
   ];
 
@@ -94,10 +76,10 @@ export const StigmergyVisualizer: React.FC = () => {
           <div className="space-y-2 max-w-3xl">
             <p className="text-xs font-semibold uppercase tracking-wider text-blue-700">04 · Stigmergy</p>
             <h2 className="text-2xl font-semibold text-slate-950 tracking-tight">
-              Shared trail coordination
+              How shared-trail coordination works
             </h2>
             <p className="text-sm text-slate-600 leading-relaxed">
-              Conceptual sequence only. Live decisions and gate results are shown in Safety and Decisions.
+              This is the intended sequence. Live agent decisions and SafetyGate results appear after you run a coordination tick.
             </p>
           </div>
         </div>
@@ -147,15 +129,15 @@ export const StigmergyVisualizer: React.FC = () => {
 
             <div className="border-y border-slate-200 py-3 space-y-2 text-xs font-mono">
               <div className="flex justify-between">
-                <span className="text-slate-400">Acting Entity:</span>
+                <span className="text-slate-400">Who:</span>
                 <span className="text-slate-900 font-semibold">{steps[activeStep].agent}</span>
               </div>
               <div className="flex justify-between">
-                <span className="text-slate-400">Bus / scope:</span>
+                <span className="text-slate-400">Where:</span>
                 <span className="text-slate-700">{steps[activeStep].location}</span>
               </div>
               <div className="flex justify-between">
-                <span className="text-slate-400">Trigger Condition:</span>
+                <span className="text-slate-400">When:</span>
                 <span className="text-slate-700">{steps[activeStep].condition}</span>
               </div>
             </div>
@@ -165,7 +147,7 @@ export const StigmergyVisualizer: React.FC = () => {
             </p>
 
             <div className="border-l-2 border-blue-700 bg-blue-50 p-3 text-xs text-slate-700">
-              <strong className="text-blue-900 font-semibold">Coordination detail: </strong>
+              <strong className="text-blue-900 font-semibold">What this means: </strong>
               {steps[activeStep].action}
             </div>
 
@@ -202,7 +184,7 @@ export const StigmergyVisualizer: React.FC = () => {
               Trail signals
             </h3>
             <p className="text-sm text-slate-600">
-              Agent deposits currently include demand and energy-surplus trail signals.
+              Agents currently leave two kinds of fading signals: demand and surplus.
             </p>
           </div>
 
@@ -213,7 +195,7 @@ export const StigmergyVisualizer: React.FC = () => {
                 dot: 'bg-red-500',
                 title: 'Demand',
                 badge: 'Sinks',
-                desc: 'The backend deposits demand trail for low-voltage conditions.',
+                desc: 'Written when a bus looks short of voltage support (low voltage). Nearby agents can treat this as a request for help.',
                 effect: 'Supports the agent decision',
               },
               {
@@ -221,7 +203,7 @@ export const StigmergyVisualizer: React.FC = () => {
                 dot: 'bg-cyan-500',
                 title: 'Surplus',
                 badge: 'Sources',
-                desc: 'The backend deposits surplus trail based on local grid state.',
+                desc: 'Written when local conditions look like extra generation. Nearby agents can ease output instead of adding more.',
                 effect: 'Supports the agent decision',
               },
             ].map((sig) => (

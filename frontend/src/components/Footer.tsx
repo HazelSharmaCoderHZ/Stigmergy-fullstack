@@ -1,5 +1,4 @@
 import React from 'react';
-import { Zap, ShieldCheck } from 'lucide-react';
 
 export const Footer: React.FC = () => {
   return (
@@ -19,7 +18,7 @@ export const Footer: React.FC = () => {
               </span>
             </div>
             <p className="text-xs text-slate-400 max-w-md leading-relaxed">
-              Demonstration prototype for decentralized multi-agent energy distribution. Developed for academic evaluation in distributed power systems and biologically-inspired stigmergic coordination.
+              Research prototype: IEEE-14 agents coordinate through fading shared signals (stigmergy). Proposed generator changes pass through SafetyGate before they are applied.
             </p>
             <div className="text-[11px] font-mono text-slate-500">
               Department of Electrical & Computer Engineering · Swarm Intelligence Lab
@@ -29,14 +28,14 @@ export const Footer: React.FC = () => {
           {/* Col 2: Academic Foundations */}
           <div className="space-y-2">
             <span className="text-xs font-mono uppercase text-slate-200 font-bold block">
-              Core Methodologies
+              What it uses
             </span>
             <ul className="space-y-1.5 text-xs text-slate-400">
-              <li>Digital Pheromone Fields</li>
-              <li>Spatial Diffusion & Decay</li>
-              <li>Decentralized Power Dispatch</li>
-              <li>Multi-Agent Swarm Balancing</li>
-              <li>Kirchhoff Flow Admittance</li>
+              <li>Shared trail signals that fade</li>
+              <li>Neighbor sensing of those trails</li>
+              <li>Local agent decisions</li>
+              <li>SafetyGate before generator changes</li>
+              <li>IEEE-14 power flow</li>
             </ul>
           </div>
 

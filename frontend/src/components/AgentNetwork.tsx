@@ -1,10 +1,13 @@
 import React, { useEffect, useState } from 'react';
+import { Zap } from 'lucide-react';
 import { Agent, GridNode } from '../types/grid';
 
 interface AgentNetworkProps {
   agents: Agent[];
   nodes: GridNode[];
   tickNonce?: number;
+  tickPending?: boolean;
+  onRunTick?: () => void;
   onSelectNode: (node: GridNode | null) => void;
 }
 
@@ -12,13 +15,14 @@ export const AgentNetwork: React.FC<AgentNetworkProps> = ({
   agents,
   nodes,
   tickNonce,
+  tickPending = false,
+  onRunTick,
   onSelectNode,
 }) => {
   const [pulseKey, setPulseKey] = useState(0);
   const [pulsing, setPulsing] = useState(false);
 
-  // Brief, decorative glow whenever a coordination tick completes
-  // (signals activity only — not an acceptance verdict from the SafetyGate).
+  // Brief glow when a tick completes. This is activity only, not a SafetyGate result.
   useEffect(() => {
     if (tickNonce === undefined) return;
     setPulseKey((key) => key + 1);
@@ -43,12 +47,22 @@ export const AgentNetwork: React.FC<AgentNetworkProps> = ({
               Agent state
             </h2>
             <p className="text-sm text-slate-600 max-w-2xl">
-              Backend snapshots show each agent's assigned bus, state, and current decision.
+              Each agent is assigned to one IEEE-14 bus. The snapshot shows its current state and decision.
             </p>
           </div>
 
-          <div className="text-sm text-slate-600">
+          <div className="flex items-center gap-3 text-sm text-slate-600">
             <strong className="text-slate-900">{agents.length}</strong> backend agents
+            {onRunTick && (
+              <button
+                onClick={onRunTick}
+                disabled={tickPending}
+                className="flex items-center gap-1.5 border border-blue-700 px-2.5 py-1 text-xs font-semibold text-blue-800 hover:bg-blue-50 disabled:opacity-50"
+              >
+                <Zap className="h-3 w-3" />
+                <span>{tickPending ? 'Tick running...' : 'Run coordination tick'}</span>
+              </button>
+            )}
           </div>
         </div>
 
@@ -56,12 +70,19 @@ export const AgentNetwork: React.FC<AgentNetworkProps> = ({
         <div key={pulseKey} className={`grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-3 ${pulsing ? 'agent-tick-pulse' : ''}`}>
           {agents.map((agent) => {
             const currentNode = nodes.find((n) => n.id === agent.currentZoneId);
+            const highVoltage = agent.sensedSignal === 'HIGH_VOLTAGE';
+            const normalVoltage = agent.sensedSignal === 'NORMAL';
+            const cardTone = highVoltage
+              ? 'bg-red-50 border-red-200 hover:border-red-400'
+              : normalVoltage
+                ? 'bg-green-50 border-green-200 hover:border-green-400'
+                : 'bg-white border-slate-200 hover:border-blue-400';
 
             return (
               <div
                 key={agent.id}
                 onClick={() => currentNode && onSelectNode(currentNode)}
-                className="group relative overflow-hidden bg-white border border-slate-200 hover:border-blue-400 transition-colors cursor-pointer"
+                className={`group relative overflow-hidden border transition-colors cursor-pointer ${cardTone}`}
               >
                 {/* State accent line */}
 

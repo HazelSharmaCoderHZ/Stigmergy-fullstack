@@ -1,5 +1,6 @@
 import React, { useMemo } from 'react';
 import { SystemMetrics } from '../types/grid';
+import { AIGridAnalyst } from './AIGridAnalyst';
 import { 
   Zap, 
   Gauge, 
@@ -12,6 +13,7 @@ interface ControlDashboardProps {
   history: Array<{ timestamp: string; generation: number; demand: number }>;
   backendStatus?: 'connecting' | 'connected' | 'error';
   backendError?: string;
+  tickNonce?: number;
 }
 
 export const ControlDashboard: React.FC<ControlDashboardProps> = ({
@@ -19,6 +21,7 @@ export const ControlDashboard: React.FC<ControlDashboardProps> = ({
   history,
   backendStatus,
   backendError = '',
+  tickNonce,
 }) => {
   const timeSeriesData = history;
 
@@ -242,6 +245,8 @@ export const ControlDashboard: React.FC<ControlDashboardProps> = ({
           </div>
 
         </div>
+
+        <AIGridAnalyst tickNonce={tickNonce} />
 
       </div>
     </section>

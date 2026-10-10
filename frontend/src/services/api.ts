@@ -90,9 +90,17 @@ async function request<T>(path: string, options?: RequestInit): Promise<T> {
   });
 
   if (!response.ok) {
-    throw new Error(
-      `Backend request failed (${response.status}): ${await response.text()}`,
-    );
+    const text = await response.text();
+    let message = text;
+    try {
+      const parsed = JSON.parse(text) as { detail?: unknown };
+      if (typeof parsed.detail === "string") {
+        message = parsed.detail;
+      }
+    } catch {
+      /* keep raw text */
+    }
+    throw new Error(message || `Backend request failed (${response.status})`);
   }
 
   return response.json() as Promise<T>;
@@ -109,5 +117,27 @@ export function getAgentState() {
 export function runCoordinationTick() {
   return request<CoordinationTickResponse>("/api/coordination/tick", {
     method: "POST",
+  });
+}
+
+export interface AnalystRecommendation {
+  text: string;
+  evidence: string;
+}
+
+export interface AnalystResponse {
+  available: boolean;
+  tick?: number;
+  what_happened: string;
+  why: string;
+  recommendations: AnalystRecommendation[];
+  answer: string;
+  model?: string;
+}
+
+export function analyzeLatestTick(question?: string) {
+  return request<AnalystResponse>("/api/ai/analyze", {
+    method: "POST",
+    body: JSON.stringify({ question: question?.trim() || null }),
   });
 }

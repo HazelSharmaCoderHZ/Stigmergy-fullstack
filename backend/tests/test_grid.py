@@ -1,4 +1,5 @@
 import copy
+import socket
 import unittest
 from types import SimpleNamespace
 from unittest.mock import patch
@@ -6,6 +7,7 @@ from unittest.mock import patch
 import pandas as pd
 
 from app.agents.grid_agent import GridAgent
+from app.ai_analyst import AiUnavailable, analyze_snapshot
 import app.main as main
 from app.safety.safety_gate import SafetyGate
 from app.trail.memory import TrailMemory
@@ -37,6 +39,18 @@ def make_generator_environment():
 
 
 class GridCoordinationTests(unittest.TestCase):
+    def test_analyst_converts_upstream_timeout_to_controlled_error(self):
+        with (
+            patch.dict("os.environ", {"GEMINI_API_KEY": "test-key"}, clear=False),
+            patch("app.ai_analyst.urllib.request.urlopen", side_effect=socket.timeout("slow")) as urlopen,
+        ):
+            with self.assertRaises(AiUnavailable) as ctx:
+                analyze_snapshot({"tick": 1})
+
+        self.assertEqual(str(ctx.exception), "Gemini request timed out. Please try again.")
+        self.assertNotIn("test-key", str(ctx.exception))
+        self.assertEqual(urlopen.call_args.kwargs["timeout"], 90)
+
     def test_trail_persists_and_is_sensed_across_ticks(self):
         trail = TrailMemory(decay_rate=0.0, diffusion_rate=0.5)
         trail.set_topology([(1, 2)])
@@ -99,6 +113,14 @@ class GridCoordinationTests(unittest.TestCase):
         agent = make_agent(0, "increase_local_support")
         with patch.object(main, "grid_environment", environment):
             self.assertEqual(main.get_generator_for_bus(0), (None, None))
+            proposal, reason = main.propose_generator_target(agent)
+        self.assertIsNone(proposal)
+        self.assertIn("No in-service net.gen", reason)
+
+    def test_missing_generator_proposal_is_skipped(self):
+        environment = make_generator_environment()
+        agent = make_agent(3, "increase_local_support")
+        with patch.object(main, "grid_environment", environment):
             proposal, reason = main.propose_generator_target(agent)
         self.assertIsNone(proposal)
         self.assertIn("No in-service net.gen", reason)
@@ -211,6 +233,101 @@ class GridCoordinationTests(unittest.TestCase):
         self.assertFalse(response["actions"][0]["accepted"])
         self.assertIn("trail_sensed", diagnostics[0])
         self.assertIn("trail_deposited", diagnostics[0])
+        self.assertEqual(main.last_analyst_snapshot["tick"], 1)
+        self.assertIn("proposal_diagnostics", main.last_analyst_snapshot)
+
+    def test_skipped_high_voltage_proposal_does_not_deposit_surplus(self):
+        class FakeGrid:
+            def run_power_flow(self):
+                return True
+
+            def get_grid_state(self):
+                return SimpleNamespace(
+                    buses=[SimpleNamespace(id=1, voltage_pu=1.08)],
+                    model_dump=lambda: {"converged": True},
+                )
+
+        agent = make_agent(1)
+        trail = TrailMemory()
+        with (
+            patch.object(main, "grid_environment", FakeGrid()),
+            patch.object(main, "agents", [agent]),
+            patch.object(main, "trail_memory", trail),
+            patch.object(main, "coordination_tick", 0),
+            patch.object(main, "propose_generator_target", return_value=(None, "no eligible generator")),
+        ):
+            result = main.run_coordination_tick()
+
+        diagnostic = result["proposal_diagnostics"][0]
+        self.assertEqual(diagnostic["status"], "skipped")
+        self.assertIsNone(diagnostic["trail_deposited"])
+        self.assertEqual(result["trail"]["deposits_this_tick"], {})
+        self.assertEqual(trail.sense_neighborhood(1, PheromoneType.ENERGY_SURPLUS), {})
+
+    def test_rejected_high_voltage_proposal_does_not_deposit_surplus(self):
+        class FakeGrid:
+            def run_power_flow(self):
+                return True
+
+            def get_grid_state(self):
+                return SimpleNamespace(
+                    buses=[SimpleNamespace(id=1, voltage_pu=1.08)],
+                    model_dump=lambda: {"converged": True},
+                )
+
+        agent = make_agent(1)
+        trail = TrailMemory()
+        with (
+            patch.object(main, "grid_environment", FakeGrid()),
+            patch.object(main, "agents", [agent]),
+            patch.object(main, "trail_memory", trail),
+            patch.object(main, "coordination_tick", 0),
+            patch.object(main, "propose_generator_target", return_value=({
+                "agent_id": agent.state.agent_id,
+                "generator_id": 0,
+                "target_p_mw": 1.0,
+                "previous_p_mw": 0.0,
+                "proposed_action": "reduce_local_generation",
+            }, None)),
+            patch.object(main.safety_gate, "evaluate_generator_action", return_value={"accepted": False, "reason": "test rejection"}),
+        ):
+            result = main.run_coordination_tick()
+
+        diagnostic = result["proposal_diagnostics"][0]
+        self.assertEqual(diagnostic["status"], "rejected")
+        self.assertIsNone(diagnostic["trail_deposited"])
+        self.assertEqual(result["trail"]["deposits_this_tick"], {})
+        self.assertEqual(trail.sense_neighborhood(1, PheromoneType.ENERGY_SURPLUS), {})
+
+    def test_summarize_grid_keeps_alerts_not_full_tables(self):
+        summary = main.summarize_grid(SimpleNamespace(
+            converged=True,
+            total_generation_mw=200.0,
+            total_load_mw=180.0,
+            min_voltage_pu=0.94,
+            max_voltage_pu=1.02,
+            max_line_loading_percent=85.0,
+            buses=[SimpleNamespace(id=1, voltage_pu=0.94)],
+            lines=[SimpleNamespace(id=0, from_bus=1, to_bus=2, loading_percent=85.0)],
+        ))
+        self.assertNotIn("buses", summary)
+        self.assertEqual(summary["voltage_outside_0.95_1.05_pu"][0]["bus_id"], 1)
+        self.assertEqual(summary["lines_loading_ge_80pct"][0]["loading_percent"], 85.0)
+
+    def test_analyst_requires_a_completed_tick(self):
+        with patch.object(main, "last_analyst_snapshot", None):
+            with self.assertRaises(main.HTTPException) as ctx:
+                main.analyze_latest_tick()
+        self.assertEqual(ctx.exception.status_code, 400)
+
+    def test_analyst_unavailable_without_api_key(self):
+        with (
+            patch.object(main, "last_analyst_snapshot", {"tick": 1}),
+            patch.dict("os.environ", {"GEMINI_API_KEY": ""}, clear=False),
+        ):
+            with self.assertRaises(main.HTTPException) as ctx:
+                main.analyze_latest_tick()
+        self.assertEqual(ctx.exception.status_code, 503)
 
 
 if __name__ == "__main__":
