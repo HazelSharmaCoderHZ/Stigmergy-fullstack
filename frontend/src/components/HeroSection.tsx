@@ -1,5 +1,5 @@
 import React from 'react';
-import { GridNode, GridLink, Agent, ActiveSignal, PheromoneType } from '../types/grid';
+import { GridNode, GridLink, Agent, ActiveSignal } from '../types/grid';
 import { GridCanvas } from './GridCanvas';
 import { Zap, Radio, Cpu, ArrowDownRight, ArrowRight, ShieldCheck, Activity } from 'lucide-react';
 
@@ -16,8 +16,8 @@ interface HeroSectionProps {
   onTogglePheromones: () => void;
   onToggleEnergyFlow: () => void;
   onToggleAgents: () => void;
-  onInjectSignal: (nodeId: string, type: PheromoneType) => void;
   onTriggerSurge: () => void;
+  tickPending?: boolean;
   onNavigateToSection: (sectionId: string) => void;
 }
 
@@ -34,8 +34,8 @@ export const HeroSection: React.FC<HeroSectionProps> = ({
   onTogglePheromones,
   onToggleEnergyFlow,
   onToggleAgents,
-  onInjectSignal,
   onTriggerSurge,
+  tickPending = false,
   onNavigateToSection,
 }) => {
   return (
@@ -66,7 +66,7 @@ export const HeroSection: React.FC<HeroSectionProps> = ({
 
             {/* Scientific Explanation */}
             <p className="text-sm sm:text-base text-slate-300 leading-relaxed">
-              An adaptive electrical grid where autonomous agents sense local physical conditions, deposit environmental signals (<span className="text-blue-300 font-semibold">digital pheromones</span>), and dynamically coordinate real-time power dispatch without a single point of failure or centralized bottlenecks.
+              A backend simulation where bus agents sense local voltage, share decaying trail signals, and propose generator setpoints. The SafetyGate evaluates executable proposals before accepted changes are applied.
             </p>
 
             
@@ -79,18 +79,11 @@ export const HeroSection: React.FC<HeroSectionProps> = ({
               <div className="flex flex-wrap gap-2.5">
                 <button
                   onClick={onTriggerSurge}
+                  disabled={tickPending}
                   className="px-3.5 py-2 text-xs font-semibold text-white bg-blue-600 hover:bg-blue-500 rounded border border-blue-400/40 shadow flex items-center gap-2 transition-transform active:scale-95"
                 >
                   <Zap className="w-3.5 h-3.5 text-yellow-300" />
-                  <span>Trigger Metro Load Surge</span>
-                </button>
-
-                <button
-                  onClick={() => onInjectSignal('node-01', 'ENERGY_SURPLUS')}
-                  className="px-3.5 py-2 text-xs font-medium text-cyan-200 bg-slate-800 hover:bg-slate-700 rounded border border-cyan-800/60 flex items-center gap-2 transition-colors"
-                >
-                  <Radio className="w-3.5 h-3.5 text-cyan-400" />
-                  <span>Emit Solar Surplus Wave</span>
+                  <span>{tickPending ? 'Coordination Tick Running…' : 'Run Coordination Tick'}</span>
                 </button>
 
                 <button
@@ -111,7 +104,7 @@ export const HeroSection: React.FC<HeroSectionProps> = ({
               <div className="flex items-center justify-between text-xs font-mono text-slate-400 px-1">
                 <span className="flex items-center gap-1.5">
                   <span className="w-2 h-2 rounded-full bg-emerald-400 animate-pulse" />
-                  <span>LIVE TOP-DOWN SMART CITY GRID</span>
+                  <span>IEEE-14 BUS MODEL</span>
                 </span>
                 <span className="text-blue-300">CLICK ANY NODE TO INSPECT TELEMETRY</span>
               </div>
@@ -130,7 +123,6 @@ export const HeroSection: React.FC<HeroSectionProps> = ({
                 onTogglePheromones={onTogglePheromones}
                 onToggleEnergyFlow={onToggleEnergyFlow}
                 onToggleAgents={onToggleAgents}
-                onInjectSignal={onInjectSignal}
                 compactHeroMode={true}
               />
             </div>

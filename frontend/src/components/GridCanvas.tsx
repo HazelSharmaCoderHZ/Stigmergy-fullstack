@@ -1,12 +1,12 @@
 import React, { useRef, useEffect, useState, useMemo } from 'react';
-import { GridNode, GridLink, Agent, ActiveSignal, PheromoneType } from '../types/grid';
+import { GridNode, GridLink, Agent, ActiveSignal } from '../types/grid';
 import { Zap, Activity, Shield, Battery, Sun, Wind, Droplets, Factory, Building, Hospital, Radio, ArrowRight, Eye, Layers } from 'lucide-react';
 
 interface GridCanvasProps {
   nodes: GridNode[];
   links: GridLink[];
   agents: Agent[];
-  activeSignals: ActiveSignal[];
+  activeSignals?: ActiveSignal[];
   selectedNodeId: string | null;
   onSelectNode: (node: GridNode | null) => void;
   showPheromones: boolean;
@@ -15,7 +15,6 @@ interface GridCanvasProps {
   onTogglePheromones?: () => void;
   onToggleEnergyFlow?: () => void;
   onToggleAgents?: () => void;
-  onInjectSignal?: (nodeId: string, type: PheromoneType) => void;
   compactHeroMode?: boolean;
 }
 
@@ -35,7 +34,7 @@ export const GridCanvas: React.FC<GridCanvasProps> = ({
   nodes,
   links,
   agents,
-  activeSignals,
+  activeSignals = [],
   selectedNodeId,
   onSelectNode,
   showPheromones,
@@ -44,7 +43,6 @@ export const GridCanvas: React.FC<GridCanvasProps> = ({
   onTogglePheromones,
   onToggleEnergyFlow,
   onToggleAgents,
-  onInjectSignal,
   compactHeroMode = false,
 }) => {
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
@@ -108,8 +106,8 @@ export const GridCanvas: React.FC<GridCanvasProps> = ({
         const sCoord = getCoords(sNode);
         const tCoord = getCoords(tNode);
 
-        // Density proportional to flow MW
-        const count = Math.max(2, Math.floor(link.currentFlowMW / 80));
+        // Keep animation density independent of flow; line loading is shown as a measurement.
+        const count = 2;
         for (let i = 0; i < count; i++) {
           newParticles.push({
             linkId: link.id,
@@ -117,8 +115,8 @@ export const GridCanvas: React.FC<GridCanvasProps> = ({
             sourceY: sCoord.y,
             targetX: tCoord.x,
             targetY: tCoord.y,
-            progress: Math.random(),
-            speed: 0.003 + (link.currentFlowMW / 1000) * 0.006,
+            progress: ((i * 37 + links.indexOf(link) * 19) % 100) / 100,
+            speed: 0.004,
             color: link.status === 'congested' ? '#EF4444' : link.status === 'rerouted' ? '#F59E0B' : '#38BDF8',
             size: link.status === 'congested' ? 3.5 : 2.5,
           });
@@ -131,13 +129,13 @@ export const GridCanvas: React.FC<GridCanvasProps> = ({
     const render = () => {
       ctx.clearRect(0, 0, dimensions.width, dimensions.height);
 
-      // 1. Draw Stigmergic Environmental Signal Field (Pheromones)
+      // 1. Mark buses with nonzero agent-sensed trail readings.
       if (showPheromones) {
-        // Draw continuous localized grid cell diffusion fields
         nodes.forEach((node) => {
-          if (node.pheromoneIntensity > 0.15) {
+          if (node.pheromoneIntensity > 0) {
             const coord = getCoords(node);
-            const radius = 35 + node.pheromoneIntensity * 65;
+            // The API provides sensed values, not a spatial field extent.
+            const radius = 15 + Math.max(0, Math.min(1, node.pheromoneIntensity)) * 3;
             const gradient = ctx.createRadialGradient(
               coord.x,
               coord.y,
@@ -148,9 +146,9 @@ export const GridCanvas: React.FC<GridCanvasProps> = ({
             );
 
             let r = 59, g = 130, b = 246; // default blue
-            if (node.activePheromoneType === 'DEMAND_SIGNAL' || node.status === 'congestion') {
+            if (node.activePheromoneType === 'DEMAND_SIGNAL') {
               r = 239; g = 68; b = 68; // alert red
-            } else if (node.activePheromoneType === 'LOAD_PRESSURE' || node.status === 'warning') {
+            } else if (node.activePheromoneType === 'LOAD_PRESSURE') {
               r = 245; g = 158; b = 11; // amber
             } else if (node.activePheromoneType === 'ENERGY_SURPLUS') {
               r = 6; g = 182; b = 212; // cyan
@@ -158,8 +156,9 @@ export const GridCanvas: React.FC<GridCanvasProps> = ({
               r = 16; g = 185; b = 129; // emerald
             }
 
-            gradient.addColorStop(0, `rgba(${r}, ${g}, ${b}, ${node.pheromoneIntensity * 0.42})`);
-            gradient.addColorStop(0.5, `rgba(${r}, ${g}, ${b}, ${node.pheromoneIntensity * 0.18})`);
+            const intensity = Math.max(0, Math.min(1, node.pheromoneIntensity));
+            gradient.addColorStop(0, `rgba(${r}, ${g}, ${b}, ${intensity * 0.42})`);
+            gradient.addColorStop(0.5, `rgba(${r}, ${g}, ${b}, ${intensity * 0.18})`);
             gradient.addColorStop(1, `rgba(${r}, ${g}, ${b}, 0)`);
 
             ctx.fillStyle = gradient;
@@ -167,14 +166,6 @@ export const GridCanvas: React.FC<GridCanvasProps> = ({
             ctx.arc(coord.x, coord.y, radius, 0, Math.PI * 2);
             ctx.fill();
 
-            // Draw subtle diffusion wave contour
-            ctx.strokeStyle = `rgba(${r}, ${g}, ${b}, ${node.pheromoneIntensity * 0.25})`;
-            ctx.lineWidth = 1;
-            ctx.setLineDash([4, 4]);
-            ctx.beginPath();
-            ctx.arc(coord.x, coord.y, radius * 0.75, 0, Math.PI * 2);
-            ctx.stroke();
-            ctx.setLineDash([]);
           }
         });
 
@@ -222,18 +213,9 @@ export const GridCanvas: React.FC<GridCanvasProps> = ({
         }
         ctx.stroke();
 
-        // Pheromone trace along line if enabled
-        if (showPheromones && link.pheromoneTraces > 0.4 && !isDimmed) {
-          ctx.beginPath();
-          ctx.moveTo(sCoord.x, sCoord.y);
-          ctx.lineTo(tCoord.x, tCoord.y);
-          ctx.strokeStyle = `rgba(14, 165, 233, ${link.pheromoneTraces * 0.35})`;
-          ctx.lineWidth = 6;
-          ctx.stroke();
-        }
       });
 
-      // 3. Draw Moving Energy Flow Particles
+      // 3. Animate line direction for visual guidance; no MW value is encoded in particle motion.
       if (showEnergyFlow) {
         particlesRef.current.forEach((p) => {
           const link = links.find((l) => l.id === p.linkId);
@@ -344,11 +326,11 @@ export const GridCanvas: React.FC<GridCanvasProps> = ({
   return (
     <div 
       ref={containerRef} 
-      className="relative w-full rounded-lg bg-slate-950 border border-slate-800 overflow-hidden shadow-2xl select-none"
+      className="relative w-full bg-white border border-slate-200 overflow-hidden select-none"
       style={{ height: compactHeroMode ? '520px' : '620px' }}
     >
       {/* Background Engineering Coordinate Lattice */}
-      <div className="absolute inset-0 tech-grid-pattern-dark pointer-events-none opacity-40" />
+      <div className="absolute inset-0 tech-grid-pattern pointer-events-none opacity-40" />
 
       {/* HTML5 Canvas for real-time 60fps power flow and stigmergic signals */}
       <canvas
@@ -384,9 +366,9 @@ export const GridCanvas: React.FC<GridCanvasProps> = ({
             >
               {/* Interactive Node Marker */}
               <div
-                className={`relative flex items-center justify-center w-8 h-8 rounded-md border shadow-lg cursor-pointer transition-all duration-200 ${
+                className={`relative flex items-center justify-center w-8 h-8 border cursor-pointer transition-colors ${
                   getStatusBorder(node.status)
-                } ${isSelected ? 'scale-125 ring-4 ring-blue-400/80' : isHovered ? 'scale-115' : 'scale-100'}`}
+                } ${isSelected || isHovered ? 'outline outline-2 outline-blue-400' : ''}`}
               >
                 {getNodeIcon(node.type)}
 
@@ -408,45 +390,45 @@ export const GridCanvas: React.FC<GridCanvasProps> = ({
       </div>
 
       {/* Control Overlay: Layer Visibility Toggles */}
-      <div className="absolute top-3 left-3 z-30 flex items-center gap-1.5 p-1 bg-slate-900/90 backdrop-blur-md rounded border border-slate-800 text-xs">
-        <span className="px-2 py-1 text-[11px] font-mono font-semibold text-slate-400 flex items-center gap-1.5 border-r border-slate-800">
-          <Layers className="w-3.5 h-3.5 text-blue-400" />
+      <div className="absolute top-3 left-3 z-30 flex items-center gap-1 p-1 bg-white border border-slate-200 text-xs">
+        <span className="px-2 py-1 text-[11px] font-mono font-semibold text-slate-500 flex items-center gap-1.5 border-r border-slate-200">
+          <Layers className="w-3.5 h-3.5 text-blue-700" />
           <span>LAYERS</span>
         </span>
 
         {onTogglePheromones && (
           <button
             onClick={onTogglePheromones}
-            className={`px-2.5 py-1 rounded text-[11px] font-mono font-medium transition-colors ${
+            className={`px-2.5 py-1 text-[11px] font-mono font-medium transition-colors ${
               showPheromones
-                ? 'bg-blue-600/30 text-blue-300 border border-blue-500/50'
-                : 'text-slate-400 hover:text-white hover:bg-slate-800'
+              ? 'bg-blue-50 text-blue-800 border border-blue-200'
+              : 'text-slate-600 hover:text-slate-950 hover:bg-slate-50'
             }`}
           >
-            Pheromones: {showPheromones ? 'ON' : 'OFF'}
+            Agent-sensed trail: {showPheromones ? 'ON' : 'OFF'}
           </button>
         )}
 
         {onToggleEnergyFlow && (
           <button
             onClick={onToggleEnergyFlow}
-            className={`px-2.5 py-1 rounded text-[11px] font-mono font-medium transition-colors ${
+            className={`px-2.5 py-1 text-[11px] font-mono font-medium transition-colors ${
               showEnergyFlow
-                ? 'bg-cyan-600/30 text-cyan-300 border border-cyan-500/50'
-                : 'text-slate-400 hover:text-white hover:bg-slate-800'
+              ? 'bg-blue-50 text-blue-800 border border-blue-200'
+              : 'text-slate-600 hover:text-slate-950 hover:bg-slate-50'
             }`}
           >
-            Flow Pulses: {showEnergyFlow ? 'ON' : 'OFF'}
+            Flow direction: {showEnergyFlow ? 'ON' : 'OFF'}
           </button>
         )}
 
         {onToggleAgents && (
           <button
             onClick={onToggleAgents}
-            className={`px-2.5 py-1 rounded text-[11px] font-mono font-medium transition-colors ${
+            className={`px-2.5 py-1 text-[11px] font-mono font-medium transition-colors ${
               showAgents
-                ? 'bg-emerald-600/30 text-emerald-300 border border-emerald-500/50'
-                : 'text-slate-400 hover:text-white hover:bg-slate-800'
+              ? 'bg-blue-50 text-blue-800 border border-blue-200'
+              : 'text-slate-600 hover:text-slate-950 hover:bg-slate-50'
             }`}
           >
             Agents: {showAgents ? 'ON' : 'OFF'}
@@ -455,40 +437,36 @@ export const GridCanvas: React.FC<GridCanvasProps> = ({
       </div>
 
       {/* Legend Ribbon */}
-      <div className="absolute top-3 right-3 z-30 hidden sm:flex items-center gap-3 px-3 py-1.5 bg-slate-900/90 backdrop-blur-md rounded border border-slate-800 text-[10px] font-mono text-slate-300">
+      <div className="absolute top-3 right-3 z-30 hidden sm:flex items-center gap-3 px-3 py-1.5 bg-white/95 border border-slate-200 text-[10px] font-mono text-slate-600">
         <div className="flex items-center gap-1.5">
-          <span className="w-2 h-2 rounded-full bg-cyan-400" />
-          <span>Surplus</span>
-        </div>
-        <div className="flex items-center gap-1.5">
-          <span className="w-2 h-2 rounded-full bg-blue-500" />
-          <span>Stable</span>
+          <span className="w-2 h-2 rounded-full bg-blue-700" />
+          <span>In range</span>
         </div>
         <div className="flex items-center gap-1.5">
           <span className="w-2 h-2 rounded-full bg-amber-400" />
           <span>Warning</span>
         </div>
         <div className="flex items-center gap-1.5">
-          <span className="w-2 h-2 rounded-full bg-rose-500 animate-ping" />
+          <span className="w-2 h-2 rounded-full bg-red-600" />
           <span>Congestion</span>
         </div>
       </div>
 
       {/* Selected Node Telemetry HUD Drawer (Bottom Left or Floating) */}
       {selectedNode && (
-        <div className="absolute bottom-3 left-3 right-3 sm:right-auto sm:w-84 z-30 p-3.5 bg-slate-900/95 backdrop-blur-md rounded-lg border border-slate-700 shadow-2xl text-white animate-in fade-in duration-200">
-          <div className="flex items-center justify-between pb-2 border-b border-slate-800">
+        <div className="absolute bottom-3 left-3 right-3 sm:right-auto sm:w-84 z-30 border border-slate-200 bg-white p-3.5 text-slate-900">
+          <div className="flex items-center justify-between pb-2 border-b border-slate-200">
             <div>
-              <span className="text-[10px] font-mono text-slate-400 tracking-wider uppercase">
+              <span className="text-[10px] font-mono text-slate-500 tracking-wider uppercase">
                 {selectedNode.zoneCode} · {selectedNode.type.toUpperCase()}
               </span>
-              <h4 className="text-sm font-bold text-white flex items-center gap-2">
+              <h4 className="text-sm font-semibold text-slate-950 flex items-center gap-2">
                 {selectedNode.name}
               </h4>
             </div>
             <button
               onClick={() => onSelectNode(null)}
-              className="text-slate-400 hover:text-white text-xs px-1.5 py-0.5 rounded hover:bg-slate-800"
+              className="text-slate-500 hover:text-slate-950 text-xs px-1.5 py-0.5 hover:bg-slate-100"
             >
               ✕
             </button>
@@ -496,7 +474,7 @@ export const GridCanvas: React.FC<GridCanvasProps> = ({
 
           {/* Load and Energy Bars */}
           <div className="grid grid-cols-2 gap-3 my-2.5">
-            <div className="p-2 bg-slate-950 rounded border border-slate-800/80">
+            {selectedNode.energyLevel !== undefined && <div className="p-2 bg-slate-950 rounded border border-slate-800/80">
               <div className="flex items-center justify-between text-[10px] font-mono text-slate-400 mb-1">
                 <span>ENERGY AVAIL</span>
                 <span className="text-blue-300 font-bold">{selectedNode.energyLevel}%</span>
@@ -507,9 +485,9 @@ export const GridCanvas: React.FC<GridCanvasProps> = ({
                   style={{ width: `${selectedNode.energyLevel}%` }}
                 />
               </div>
-            </div>
+            </div>}
 
-            <div className="p-2 bg-slate-950 rounded border border-slate-800/80">
+            {selectedNode.currentLoad !== undefined && <div className="p-2 bg-slate-950 rounded border border-slate-800/80">
               <div className="flex items-center justify-between text-[10px] font-mono text-slate-400 mb-1">
                 <span>LOAD DEMAND</span>
                 <span className={`font-bold ${selectedNode.currentLoad > 85 ? 'text-red-400' : 'text-slate-200'}`}>
@@ -524,59 +502,45 @@ export const GridCanvas: React.FC<GridCanvasProps> = ({
                   style={{ width: `${selectedNode.currentLoad}%` }}
                 />
               </div>
-            </div>
+            </div>}
           </div>
 
           {/* Power Metrics Table */}
-          <div className="space-y-1 text-[11px] font-mono text-slate-300 bg-slate-950/60 p-2 rounded border border-slate-800/60">
+          <div className="space-y-1 text-[11px] font-mono text-slate-700 bg-slate-50 p-2 border border-slate-200">
             <div className="flex justify-between">
-              <span className="text-slate-400">Capacity / Load:</span>
-              <span className="text-slate-100 font-semibold tabular-nums">
-                {selectedNode.currentLoadMW} / {selectedNode.capacityMW} MW
+              <span className="text-slate-400">Bus Load:</span>
+              <span className="text-slate-950 font-semibold tabular-nums">
+                {selectedNode.currentLoadMW?.toFixed(2) ?? '—'} MW
               </span>
             </div>
             <div className="flex justify-between">
               <span className="text-slate-400">Generation:</span>
-              <span className="text-cyan-400 font-semibold tabular-nums">{selectedNode.generationMW} MW</span>
+              <span className="text-blue-800 font-semibold tabular-nums">{selectedNode.generationMW?.toFixed(2) ?? '—'} MW</span>
             </div>
             <div className="flex justify-between">
               <span className="text-slate-400">Bus Voltage:</span>
-              <span className="text-slate-100 tabular-nums">{selectedNode.voltageKV} kV</span>
+              <span className="text-slate-950 tabular-nums">
+                {selectedNode.voltagePU?.toFixed(4) ?? '—'} pu
+                {selectedNode.voltageKV !== undefined && ` (${selectedNode.voltageKV.toFixed(2)} kV)`}
+              </span>
             </div>
             <div className="flex justify-between">
-              <span className="text-slate-400">Pheromone Signal:</span>
-              <span className="text-amber-400 font-semibold">
-                {selectedNode.activePheromoneType || 'NOMINAL'} ({(selectedNode.pheromoneIntensity * 100).toFixed(0)}%)
+              <span className="text-slate-400">Agent-sensed trail:</span>
+              <span className="text-blue-800 font-semibold">
+                {selectedNode.activePheromoneType || 'No sensed trail'} ({selectedNode.pheromoneIntensity.toFixed(4)})
               </span>
             </div>
           </div>
 
-          {/* Quick Action: Inject Environmental Signal */}
-          {onInjectSignal && (
-            <div className="mt-2.5 pt-2 border-t border-slate-800 flex items-center gap-1.5">
-              <button
-                onClick={() => onInjectSignal(selectedNode.id, 'DEMAND_SIGNAL')}
-                className="flex-1 px-2 py-1 text-[10px] font-mono font-semibold bg-rose-950/80 hover:bg-rose-900 text-rose-300 rounded border border-rose-800 transition-colors"
-              >
-                + Demand Signal
-              </button>
-              <button
-                onClick={() => onInjectSignal(selectedNode.id, 'ENERGY_SURPLUS')}
-                className="flex-1 px-2 py-1 text-[10px] font-mono font-semibold bg-cyan-950/80 hover:bg-cyan-900 text-cyan-300 rounded border border-cyan-800 transition-colors"
-              >
-                + Surplus Wave
-              </button>
-            </div>
-          )}
         </div>
       )}
 
       {/* Bottom Telemetry Bar */}
-      <div className="absolute bottom-2 right-3 z-20 hidden md:flex items-center gap-4 text-[10px] font-mono text-slate-400 bg-slate-950/80 px-2.5 py-1 rounded border border-slate-800">
-        <span>NODES: {nodes.length}</span>
-        <span>CORRIDORS: {links.length}</span>
-        <span>SWARM AGENTS: {agents.length}</span>
-        <span className="text-blue-400">ENGINE: ACTIVE 60FPS</span>
+      <div className="absolute bottom-2 right-3 z-20 hidden md:flex items-center gap-4 text-[10px] font-mono text-slate-600 bg-white px-2.5 py-1 border border-slate-200">
+        <span>BUSES: {nodes.length}</span>
+        <span>LINES: {links.length}</span>
+        <span>AGENTS: {agents.length}</span>
+        <span className="text-blue-400">Backend snapshot</span>
       </div>
     </div>
   );

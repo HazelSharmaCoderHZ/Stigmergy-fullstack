@@ -4,11 +4,12 @@ import { Activity, Zap, Play, Pause, RefreshCw } from 'lucide-react';
 interface HeaderProps {
   activeTab: string;
   onSelectTab: (tab: string) => void;
-  frequencyHz: number;
+  frequencyHz?: number;
   isPaused: boolean;
   onTogglePause: () => void;
   onResetGrid: () => void;
   onTriggerSurge: () => void;
+  tickPending?: boolean;
 }
 
 export const Header: React.FC<HeaderProps> = ({
@@ -19,15 +20,18 @@ export const Header: React.FC<HeaderProps> = ({
   onTogglePause,
   onResetGrid,
   onTriggerSurge,
+  tickPending = false,
 }) => {
   const navItems = [
-    { id: 'live-grid', label: 'Live Grid Map' },
-    { id: 'stigmergy', label: 'Stigmergic Activity' },
-    { id: 'analytics', label: 'Energy Analytics' },
+    { id: 'overview', label: 'Overview' },
+    { id: 'live-grid', label: 'Grid' },
+    { id: 'agents', label: 'Agents' },
+    { id: 'stigmergy', label: 'Stigmergy' },
+    { id: 'decisions', label: 'Safety & Decisions' },
   ];
 
   return (
-    <header className="sticky top-0 z-50 bg-slate-900 border-b border-slate-800 text-white shadow-md">
+    <header className="sticky top-0 z-50 bg-white border-b border-slate-200 text-slate-900">
       <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 h-16 flex items-center justify-between">
         
         {/* Zone 1: Single text element wordmark / brand */}
@@ -37,7 +41,7 @@ export const Header: React.FC<HeaderProps> = ({
             <a 
               href="#overview" 
               onClick={(e) => { e.preventDefault(); onSelectTab('overview'); }}
-              className="text-base font-bold tracking-tight text-white hover:text-blue-300 transition-colors flex items-center gap-2"
+              className="text-base font-semibold tracking-tight text-slate-950 hover:text-blue-800 flex items-center gap-2"
             >
               STIGMERGIC SMART GRID
             </a>
@@ -53,10 +57,10 @@ export const Header: React.FC<HeaderProps> = ({
               <button
                 key={item.id}
                 onClick={() => onSelectTab(item.id)}
-                className={`px-3 py-1.5 text-xs font-medium rounded transition-colors whitespace-nowrap ${
+                className={`px-3 py-1.5 text-xs font-medium transition-colors whitespace-nowrap ${
                   isActive
-                    ? 'bg-blue-600/30 text-blue-300 border border-blue-500/50'
-                    : 'text-slate-300 hover:text-white hover:bg-slate-800'
+                    ? 'bg-blue-50 text-blue-800 border-b-2 border-blue-700'
+                    : 'text-slate-600 hover:text-slate-950 hover:bg-slate-50'
                 }`}
               >
                 {item.label}
@@ -67,40 +71,32 @@ export const Header: React.FC<HeaderProps> = ({
 
         {/* Zone 3: Primary operational actions and grid telemetry */}
         <div className="flex items-center gap-2 sm:gap-3">
-          {/* Real-time Frequency Indicator */}
-          <div className="hidden sm:flex items-center gap-2 px-2.5 py-1 bg-slate-950 border border-slate-800 rounded font-mono text-xs">
-            <span className="w-2 h-2 rounded-full bg-emerald-400 animate-pulse" />
-            <span className="text-slate-400">FREQ</span>
-            <span className="text-slate-200 tabular-nums font-semibold">
-              {frequencyHz.toFixed(3)} Hz
-            </span>
-          </div>
-
-          {/* Quick Simulation Pause / Run */}
+          {/* Pause or resume read-only backend polling */}
           <button
             onClick={onTogglePause}
-            title={isPaused ? "Resume real-time simulation" : "Pause simulation"}
-            className="p-1.5 rounded bg-slate-800 hover:bg-slate-700 text-slate-300 hover:text-white border border-slate-700 transition-colors"
+            title={isPaused ? "Resume backend state polling" : "Pause backend state polling"}
+            className="p-1.5 text-slate-600 hover:text-blue-800 hover:bg-slate-50"
           >
-            {isPaused ? <Play className="w-4 h-4 text-emerald-400" /> : <Pause className="w-4 h-4 text-amber-400" />}
+            {isPaused ? <Play className="w-4 h-4 text-slate-600" /> : <Pause className="w-4 h-4 text-slate-600" />}
           </button>
 
           {/* Quick Reset */}
           <button
             onClick={onResetGrid}
-            title="Reset grid state to nominal"
-            className="p-1.5 rounded bg-slate-800 hover:bg-slate-700 text-slate-300 hover:text-white border border-slate-700 transition-colors"
+            title="Refresh backend state"
+            className="p-1.5 text-slate-600 hover:text-blue-800 hover:bg-slate-50"
           >
             <RefreshCw className="w-4 h-4" />
           </button>
 
-          {/* Inject Surge CTA */}
+          {/* Deliberate coordination tick request */}
           <button
             onClick={onTriggerSurge}
-            className="flex items-center gap-1.5 px-3 py-1.5 text-xs font-semibold text-white bg-blue-600 hover:bg-blue-500 rounded border border-blue-400/40 shadow-sm transition-colors whitespace-nowrap active:scale-95"
+            disabled={tickPending}
+            className="flex items-center gap-1.5 px-3 py-1.5 text-xs font-semibold text-blue-800 border border-blue-700 hover:bg-blue-50 whitespace-nowrap"
           >
-            <Zap className="w-3.5 h-3.5 text-yellow-300" />
-            <span>Inject Surge</span>
+            <Zap className="w-3.5 h-3.5 text-blue-800" />
+            <span>{tickPending ? 'Running tick...' : 'Run Coordination Tick'}</span>
           </button>
         </div>
 

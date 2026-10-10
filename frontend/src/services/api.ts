@@ -1,4 +1,4 @@
-const API_BASE_URL =
+export const API_BASE_URL =
   import.meta.env.VITE_API_BASE_URL || "http://127.0.0.1:8000";
 
 export interface BackendBus {
@@ -46,6 +46,43 @@ export interface BackendAgent {
   metadata?: Record<string, unknown>;
 }
 
+export interface ProposalDiagnostic {
+  agent_id: string;
+  bus_id: number;
+  decision: string;
+  status: 'skipped' | 'accepted' | 'rejected';
+  proposal_status?: 'evaluated';
+  reason: string;
+  generator_id?: number;
+  target_p_mw?: number;
+  trail_sensed: {
+    demand: number;
+    energy_surplus: number;
+  };
+  trail_deposited: string | null;
+}
+
+export interface CoordinationTickResponse {
+  tick: number;
+  grid: BackendGridState;
+  agents: BackendAgent[];
+  actions: Array<Record<string, unknown>>;
+  proposal_diagnostics: ProposalDiagnostic[];
+  trail: {
+    sensing_semantics: string;
+    deposits_this_tick: Record<string, string>;
+  };
+  coordination: {
+    agent_count: number;
+    mechanism: string;
+    direct_agent_messaging: boolean;
+    safety_gate_enabled?: boolean;
+    generator_step_mw?: number;
+    trail_response_threshold?: number;
+  };
+  note: string;
+}
+
 async function request<T>(path: string, options?: RequestInit): Promise<T> {
   const response = await fetch(`${API_BASE_URL}${path}`, {
     ...options,
@@ -70,15 +107,7 @@ export function getAgentState() {
 }
 
 export function runCoordinationTick() {
-  return request<{
-    tick: number;
-    grid: BackendGridState;
-    agents: BackendAgent[];
-    coordination: {
-      agent_count: number;
-      mechanism: string;
-      direct_agent_messaging: boolean;
-    };
-    note: string;
-  }>("/api/coordination/tick", { method: "POST" });
+  return request<CoordinationTickResponse>("/api/coordination/tick", {
+    method: "POST",
+  });
 }

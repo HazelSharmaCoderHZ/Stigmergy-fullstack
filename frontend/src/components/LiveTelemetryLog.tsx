@@ -40,33 +40,33 @@ export const LiveTelemetryLog: React.FC<LiveTelemetryLogProps> = ({
       case 'success':
         return <span className="text-emerald-400 font-bold">● OK</span>;
       default:
-        return <span className="text-blue-400">ℹ INFO</span>;
+        return <span className="text-blue-800">ℹ INFO</span>;
     }
   };
 
   return (
-    <div className="bg-slate-950 p-5 rounded-lg border border-slate-800 space-y-4">
+    <div className="border-t border-slate-200 pt-4 space-y-3">
       {/* Log Header */}
-      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 pb-3 border-b border-slate-800">
+      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 pb-3 border-b border-slate-200">
         <div className="flex items-center gap-2">
-          <Terminal className="w-4 h-4 text-blue-400" />
-          <h3 className="text-sm font-bold text-white font-mono uppercase tracking-wider">
-            Live Stigmergic Event Stream
+          <Terminal className="w-4 h-4 text-blue-800" />
+          <h3 className="text-sm font-semibold text-slate-950 font-mono uppercase tracking-wider">
+            Coordination Tick Diagnostics
           </h3>
-          <span className="w-2 h-2 rounded-full bg-emerald-400 animate-pulse ml-1" />
+
         </div>
 
         {/* Filter controls */}
         <div className="flex items-center gap-2 text-xs font-mono">
-          <div className="flex items-center gap-1 bg-slate-900 p-0.5 rounded border border-slate-800">
+          <div className="flex items-center gap-1 bg-white p-0.5 border border-slate-200">
             {(['all', 'signals', 'warnings', 'actions'] as const).map((filter) => (
               <button
                 key={filter}
                 onClick={() => setFilterType(filter)}
-                className={`px-2 py-0.5 rounded text-[10px] uppercase transition-colors ${
+                className={`px-2 py-0.5 text-[10px] uppercase transition-colors ${
                   filterType === filter
-                    ? 'bg-blue-600 text-white font-semibold'
-                    : 'text-slate-400 hover:text-white'
+                    ? 'bg-blue-50 text-blue-900 font-semibold'
+                    : 'text-slate-600 hover:text-slate-950'
                 }`}
               >
                 {filter}
@@ -77,7 +77,7 @@ export const LiveTelemetryLog: React.FC<LiveTelemetryLogProps> = ({
           <button
             onClick={() => setAutoScroll(!autoScroll)}
             className={`p-1 rounded border text-[10px] ${
-              autoScroll ? 'bg-slate-900 text-blue-400 border-blue-500/50' : 'bg-slate-900 text-slate-500 border-slate-800'
+              autoScroll ? 'bg-slate-900 text-blue-800 border-blue-500/50' : 'bg-white text-slate-600 border-slate-200'
             }`}
             title="Toggle autoscroll to latest"
           >

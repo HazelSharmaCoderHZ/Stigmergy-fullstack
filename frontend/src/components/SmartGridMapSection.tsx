@@ -1,27 +1,12 @@
 import React, { useState } from 'react';
-import { GridNode, GridLink, Agent, ActiveSignal, PheromoneType } from '../types/grid';
+import { GridNode, GridLink, Agent } from '../types/grid';
 import { GridCanvas } from './GridCanvas';
-import { LiveTelemetryLog } from './LiveTelemetryLog';
-import { TelemetryEvent } from '../types/grid';
-import { 
-  Compass, 
-  Layers, 
-  Zap, 
-  Radio, 
-  Cpu, 
-  Sliders, 
-  Activity, 
-  ShieldCheck, 
-  MapPin, 
-  PlusCircle, 
-  RefreshCw 
-} from 'lucide-react';
+import { Zap } from 'lucide-react';
 
 interface SmartGridMapSectionProps {
   nodes: GridNode[];
   links: GridLink[];
   agents: Agent[];
-  activeSignals: ActiveSignal[];
   selectedNode: GridNode | null;
   onSelectNode: (node: GridNode | null) => void;
   showPheromones: boolean;
@@ -30,17 +15,14 @@ interface SmartGridMapSectionProps {
   onTogglePheromones: () => void;
   onToggleEnergyFlow: () => void;
   onToggleAgents: () => void;
-  onInjectSignal: (nodeId: string, type: PheromoneType) => void;
-  telemetryEvents: TelemetryEvent[];
-  onClearEvents: () => void;
   onTriggerSurge: () => void;
+  tickPending?: boolean;
 }
 
 export const SmartGridMapSection: React.FC<SmartGridMapSectionProps> = ({
   nodes,
   links,
   agents,
-  activeSignals,
   selectedNode,
   onSelectNode,
   showPheromones,
@@ -49,56 +31,52 @@ export const SmartGridMapSection: React.FC<SmartGridMapSectionProps> = ({
   onTogglePheromones,
   onToggleEnergyFlow,
   onToggleAgents,
-  onInjectSignal,
-  telemetryEvents,
-  onClearEvents,
   onTriggerSurge,
+  tickPending = false,
 }) => {
   const [zoneTypeFilter, setZoneTypeFilter] = useState<string>('all');
 
   const filteredNodes = nodes.filter((node) => {
     if (zoneTypeFilter === 'all') return true;
-    if (zoneTypeFilter === 'generators') return node.type === 'solar' || node.type === 'wind' || node.type === 'hydro';
-    if (zoneTypeFilter === 'storage') return node.type === 'storage';
-    if (zoneTypeFilter === 'substations') return node.type === 'substation';
-    if (zoneTypeFilter === 'loads') return node.type === 'industrial' || node.type === 'commercial' || node.type === 'residential' || node.type === 'hospital';
+    if (zoneTypeFilter === 'generators') return (node.generationMW ?? 0) > 0;
+    if (zoneTypeFilter === 'high-voltage') return node.voltagePU !== undefined && node.voltagePU > 1.05;
+    if (zoneTypeFilter === 'normal-voltage') return node.voltagePU !== undefined && node.voltagePU >= 0.95 && node.voltagePU <= 1.05;
+    if (zoneTypeFilter === 'loads') return (node.currentLoadMW ?? 0) > 0;
     return true;
   });
 
   return (
-    <section id="live-grid" className="py-16 bg-slate-900 text-white border-b border-slate-800">
-      <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 space-y-8">
+    <section id="live-grid" className="scroll-mt-20 border-b border-slate-200 bg-white py-10 text-slate-900">
+      <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 space-y-5">
         
         {/* Section Header */}
-        <div className="flex flex-col sm:flex-row sm:items-end justify-between gap-4 border-b border-slate-800 pb-5">
+        <div className="flex flex-col sm:flex-row sm:items-end justify-between gap-4 border-b border-slate-200 pb-4">
           <div className="space-y-1">
-            <div className="flex items-center gap-2 text-xs font-mono text-cyan-400 uppercase tracking-wider">
-              <Compass className="w-3.5 h-3.5" />
-              </div>
-            <h2 className="text-2xl sm:text-3xl font-extrabold text-white tracking-tight">
-              Interactive Smart Grid Operations Map
+            <p className="text-xs font-semibold uppercase tracking-wider text-blue-700">02 · Grid</p>
+            <h2 className="text-2xl font-semibold tracking-tight text-slate-950">
+              IEEE-14 bus model
             </h2>
-            <p className="text-sm text-slate-300">
-              Select any busbar to inspect real-time voltage, thermal loading, and surrounding stigmergic signal gradients.
+            <p className="text-sm text-slate-600">
+              Schematic IEEE-14 bus layout. Select a bus to inspect measured voltage, load, generation, and agent-sensed trail values.
             </p>
           </div>
 
           {/* Quick Zone Category Filters */}
-          <div className="flex items-center gap-1 bg-slate-950 p-1 rounded-md border border-slate-800 text-xs font-mono">
+          <div className="flex flex-wrap items-center gap-1 border-b border-slate-200 bg-white p-1 text-xs font-mono">
             {[
-              { id: 'all', label: 'All 16 Zones' },
-              { id: 'generators', label: 'Generators' },
-              { id: 'storage', label: 'BESS' },
-              { id: 'substations', label: 'Substations' },
-              { id: 'loads', label: 'Load Hubs' },
+              { id: 'all', label: 'All 14 Buses' },
+              { id: 'generators', label: 'Generation' },
+              { id: 'high-voltage', label: 'High Voltage' },
+              { id: 'normal-voltage', label: 'Normal Voltage' },
+              { id: 'loads', label: 'Load Buses' },
             ].map((f) => (
               <button
                 key={f.id}
                 onClick={() => setZoneTypeFilter(f.id)}
-                className={`px-2.5 py-1 rounded text-[11px] transition-colors ${
+                className={`px-2.5 py-1 text-[11px] transition-colors ${
                   zoneTypeFilter === f.id
-                    ? 'bg-blue-600 text-white font-bold'
-                    : 'text-slate-400 hover:text-white'
+                    ? 'bg-blue-50 text-blue-800 font-bold'
+                    : 'text-slate-600 hover:text-slate-950'
                 }`}
               >
                 {f.label}
@@ -107,8 +85,8 @@ export const SmartGridMapSection: React.FC<SmartGridMapSectionProps> = ({
           </div>
         </div>
 
-        {/* The Main Living Grid Map + Side Telemetry Log Layout */}
-        <div className="grid grid-cols-1 lg:grid-cols-12 gap-6 items-start">
+        {/* Grid visualization and measured bus details */}
+        <div className="grid grid-cols-1 lg:grid-cols-12 gap-5 items-start">
           
           {/* Main Visualizer Stage */}
           <div className="lg:col-span-8 space-y-3">
@@ -116,7 +94,6 @@ export const SmartGridMapSection: React.FC<SmartGridMapSectionProps> = ({
               nodes={filteredNodes}
               links={links}
               agents={agents}
-              activeSignals={activeSignals}
               selectedNodeId={selectedNode ? selectedNode.id : null}
               onSelectNode={onSelectNode}
               showPheromones={showPheromones}
@@ -125,51 +102,39 @@ export const SmartGridMapSection: React.FC<SmartGridMapSectionProps> = ({
               onTogglePheromones={onTogglePheromones}
               onToggleEnergyFlow={onToggleEnergyFlow}
               onToggleAgents={onToggleAgents}
-              onInjectSignal={onInjectSignal}
               compactHeroMode={false}
             />
 
             {/* Quick Actions Panel below Canvas */}
-            <div className="p-3.5 bg-slate-950 rounded-lg border border-slate-800 flex flex-wrap items-center justify-between gap-3 text-xs font-mono">
+            <div className="flex flex-wrap items-center justify-between gap-3 rounded border border-slate-200 bg-white p-3 text-xs font-mono">
               <div className="flex items-center gap-2">
-                <span className="text-slate-400 uppercase">Interactive Injections:</span>
+                <span className="text-slate-500 uppercase">Coordination:</span>
                 <button
                   onClick={onTriggerSurge}
-                  className="px-2.5 py-1 bg-rose-950/70 hover:bg-rose-900 text-rose-300 rounded border border-rose-800 transition-colors flex items-center gap-1.5"
+                  disabled={tickPending}
+                  className="flex items-center gap-1.5 border border-blue-700 px-2.5 py-1 text-blue-800 transition-colors hover:bg-blue-50 disabled:opacity-50"
                 >
-                  <Zap className="w-3 h-3 text-rose-400" />
-                  <span>Surge Zone-07</span>
-                </button>
-                <button
-                  onClick={() => onInjectSignal('node-01', 'ENERGY_SURPLUS')}
-                  className="px-2.5 py-1 bg-cyan-950/70 hover:bg-cyan-900 text-cyan-300 rounded border border-cyan-800 transition-colors flex items-center gap-1.5"
-                >
-                  <Radio className="w-3 h-3 text-cyan-400" />
-                  <span>Solar Peak Zone-01</span>
+                  <Zap className="h-3 w-3" />
+                  <span>{tickPending ? 'Tick running...'  : 'Run coordination tick'}</span>
                 </button>
               </div>
 
-              <div className="flex items-center gap-2 text-slate-400">
-                <span>SELECTION:</span>
-                <span className="text-blue-300 font-bold">
-                  {selectedNode ? `${selectedNode.zoneCode} - ${selectedNode.name}` : 'NONE (Click node to lock)'}
+              <div className="flex items-center gap-2 text-slate-500">
+                <span>SELECTED BUS:</span>
+                <span className="text-blue-800 font-semibold">
+                  {selectedNode ? `${selectedNode.zoneCode} - ${selectedNode.name}` : 'NONE (Select a bus)'}
                 </span>
               </div>
             </div>
           </div>
 
-          {/* Right Column: Live Event Terminal Log & Selected Details */}
-          <div className="lg:col-span-4 space-y-4">
-            <LiveTelemetryLog
-              events={telemetryEvents}
-              onClearEvents={onClearEvents}
-            />
-
+          {/* Selected bus details */}
+          <div className="lg:col-span-4">
             {/* Quick Grid Zone Directory Snapshot */}
-            <div className="p-4 bg-slate-950 rounded-lg border border-slate-800 space-y-3">
+            <div className="border-t border-slate-200 pt-4 space-y-3">
               <div className="flex items-center justify-between text-xs font-mono">
-                <span className="text-slate-400 uppercase">ZONE DIRECTORY</span>
-                <span className="text-blue-400">{nodes.length} ZONES MONITORED</span>
+                <span className="text-slate-500 uppercase">Bus directory</span>
+                <span className="text-blue-800">{nodes.length} buses</span>
               </div>
 
               <div className="max-h-56 overflow-y-auto space-y-1.5 custom-scrollbar pr-1">
@@ -179,21 +144,21 @@ export const SmartGridMapSection: React.FC<SmartGridMapSectionProps> = ({
                     <div
                       key={n.id}
                       onClick={() => onSelectNode(n)}
-                      className={`flex items-center justify-between p-2 rounded text-xs font-mono cursor-pointer transition-colors ${
+                      className={`flex items-center justify-between p-2 text-xs font-mono cursor-pointer transition-colors ${
                         isCurrent
-                          ? 'bg-blue-600/30 text-white border border-blue-500'
-                          : 'bg-slate-900/60 text-slate-300 hover:bg-slate-800 border border-slate-800/80'
+                          ? 'bg-blue-50 text-blue-900 border border-blue-300'
+                          : 'text-slate-700 hover:bg-slate-50 border border-slate-200'
                       }`}
                     >
                       <div className="flex items-center gap-2 truncate">
-                        <span className="font-bold text-slate-400">{n.zoneCode}</span>
+                        <span className="font-bold text-slate-600">{n.zoneCode}</span>
                         <span className="truncate">{n.name}</span>
                       </div>
-                      <div className="flex items-center gap-2 shrink-0">
-                        <span className={n.currentLoad > 85 ? 'text-red-400 font-bold' : 'text-slate-400'}>
-                          {n.currentLoad}% Load
+              <div className="flex items-center gap-2 shrink-0">
+                        <span className="text-slate-500">
+                          {n.voltagePU?.toFixed(3) ?? '—'}
                         </span>
-                        <span className="w-1.5 h-1.5 rounded-full bg-blue-400" />
+                        <span className="w-1.5 h-1.5 rounded-full bg-blue-700" />
                       </div>
                     </div>
                   );

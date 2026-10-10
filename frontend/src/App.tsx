@@ -1,639 +1,301 @@
+import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
+  getAgentState,
   getGridState,
+  runCoordinationTick,
+  type BackendAgent,
   type BackendGridState,
+  type ProposalDiagnostic,
 } from './services/api';
-import React, { useState, useEffect, useCallback, useRef, useMemo } from 'react';
-import { 
-  GridNode, 
-  GridLink, 
-  Agent, 
-  ActiveSignal, 
-  TelemetryEvent, 
-  SimulationParams, 
-  SystemMetrics, 
-  PheromoneType 
-} from './types/grid';
-import { 
-  INITIAL_NODES, 
-  INITIAL_LINKS, 
-  INITIAL_AGENTS, 
-  INITIAL_TELEMETRY, 
-  INITIAL_METRICS 
-} from './data/gridData';
+import { Agent, GridLink, GridNode, SystemMetrics } from './types/grid';
+import { INITIAL_NODES } from './data/gridData';
 import { Header } from './components/Header';
-import { HeroSection } from './components/HeroSection';
 import { SmartGridMapSection } from './components/SmartGridMapSection';
 import { StigmergyVisualizer } from './components/StigmergyVisualizer';
 import { ControlDashboard } from './components/ControlDashboard';
+import { AgentNetwork } from './components/AgentNetwork';
 import { Footer } from './components/Footer';
 
+type BackendStatus = 'connecting' | 'connected' | 'error';
+type Snapshot = { timestamp: string; generation: number; demand: number };
+
+const busNodeId = (busId: number) => `node-${String(busId + 1).padStart(2, '0')}`;
+
+function formatTimestamp(date = new Date()) {
+  return date.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' });
+}
+
+function mapAgents(
+  backendAgents: BackendAgent[],
+  diagnostics: ProposalDiagnostic[] = [],
+): Agent[] {
+  const diagnosticByAgent = new Map(diagnostics.map((entry) => [entry.agent_id, entry]));
+  return backendAgents.map((agent) => {
+    const diagnostic = diagnosticByAgent.get(agent.agent_id);
+    const demand = diagnostic?.trail_sensed.demand
+      ?? Number(agent.metadata?.trail_demand_signal ?? 0);
+    const surplus = diagnostic?.trail_sensed.energy_surplus
+      ?? Number(agent.metadata?.trail_energy_surplus ?? 0);
+    return {
+      id: agent.agent_id,
+      name: agent.name,
+      role: agent.role,
+      currentZoneId: busNodeId(agent.current_zone_id),
+      state: agent.state,
+      action: agent.action,
+      sensedSignal: agent.sensed_signal,
+      signalStrength: agent.signal_strength ?? 0,
+      adaptationScore: undefined,
+      trailDemandSignal: demand,
+      trailEnergySurplus: surplus,
+      lastZoneVisited: undefined,
+    } as Agent;
+  });
+}
+
 export default function App() {
-  // Master state
-  const [nodes, setNodes] = useState<GridNode[]>(INITIAL_NODES);
-  const [links, setLinks] = useState<GridLink[]>(INITIAL_LINKS);
-  const [agents, setAgents] = useState<Agent[]>(INITIAL_AGENTS);
-  const [activeSignals, setActiveSignals] = useState<ActiveSignal[]>([]);
-  const [telemetryEvents, setTelemetryEvents] = useState<TelemetryEvent[]>(INITIAL_TELEMETRY);
-  const [metrics, setMetrics] = useState<SystemMetrics>(INITIAL_METRICS);
-  const [backendGrid, setBackendGrid] =
-  useState<BackendGridState | null>(null);
+  // INITIAL_NODES supplies only the existing canvas coordinates and styling.
+  const [grid, setGrid] = useState<BackendGridState | null>(null);
+  const [agents, setAgents] = useState<Agent[]>([]);
+  const [diagnostics, setDiagnostics] = useState<ProposalDiagnostic[]>([]);
+  const [history, setHistory] = useState<Snapshot[]>([]);
+  const [backendStatus, setBackendStatus] = useState<BackendStatus>('connecting');
+  const [backendError, setBackendError] = useState('');
+  const [lastBackendUpdate, setLastBackendUpdate] = useState<Date | null>(null);
+  const [tick, setTick] = useState<number | null>(null);
+  const [tickPending, setTickPending] = useState(false);
+  const [pollingPaused, setPollingPaused] = useState(false);
+  const tickInFlight = useRef(false);
+  const readInFlight = useRef(false);
+  const [showPheromones, setShowPheromones] = useState(true);
+  const [showEnergyFlow, setShowEnergyFlow] = useState(true);
+  const [showAgents, setShowAgents] = useState(true);
+  const [selectedNodeId, setSelectedNodeId] = useState<string | null>(null);
+  const [activeTab, setActiveTab] = useState('overview');
 
-const [backendStatus, setBackendStatus] =
-  useState<'connecting' | 'connected' | 'error'>('connecting');
+  const applyGridSnapshot = useCallback((snapshot: BackendGridState) => {
+    setGrid(snapshot);
+    setHistory((previous) => [
+      ...previous,
+      {
+        timestamp: formatTimestamp(),
+        generation: snapshot.total_generation_mw,
+        demand: snapshot.total_load_mw,
+      },
+    ].slice(-50));
+  }, []);
 
-const [backendError, setBackendError] = useState('');
-const [lastBackendUpdate, setLastBackendUpdate] =
-  useState<Date | null>(null);
-  // Layer visibility toggles
-  const [showPheromones, setShowPheromones] = useState<boolean>(true);
-  const [showEnergyFlow, setShowEnergyFlow] = useState<boolean>(true);
-  const [showAgents, setShowAgents] = useState<boolean>(true);
-
-  // Selected node inspection
-  const [selectedNode, setSelectedNode] = useState<GridNode | null>(null);
-
-  // Active top navigation tab
-  const [activeTab, setActiveTab] = useState<string>('overview');
-
-useEffect(() => {
-  let active = true;
-  let inFlight = false;
-
-  const refreshBackend = async () => {
-    if (inFlight) return;
-    inFlight = true;
-
+  const refreshBackend = useCallback(async () => {
+    if (readInFlight.current) return;
+    readInFlight.current = true;
+    setBackendStatus('connecting');
     try {
-      const data = await getGridState();
-
-      if (!active) return;
-
-      setBackendGrid(data);
+      const [gridState, agentState] = await Promise.all([getGridState(), getAgentState()]);
+      applyGridSnapshot(gridState);
+      setAgents(mapAgents(agentState.agents));
       setBackendStatus('connected');
       setBackendError('');
       setLastBackendUpdate(new Date());
     } catch (error) {
-      if (!active) return;
-
       setBackendStatus('error');
-      setBackendError(
-        error instanceof Error
-          ? error.message
-          : 'Unable to connect to backend',
-      );
+      setBackendError(error instanceof Error ? error.message : 'Unable to connect to backend');
     } finally {
-      inFlight = false;
+      readInFlight.current = false;
     }
-  };
+  }, [applyGridSnapshot]);
 
-  void refreshBackend();
-
-  const interval = window.setInterval(
-    () => void refreshBackend(),
-    3000,
-  );
-
-  return () => {
-    active = false;
-    window.clearInterval(interval);
-  };
-}, []);
-
-  // Convert the backend's zero-based IEEE-14 buses to the UI's existing node IDs.
-  // Coordinates, labels, and node categories stay unchanged to preserve the design.
-  const displayNodes = useMemo<GridNode[]>(() => {
-    if (!backendGrid) return nodes;
-
-    return nodes.map((node) => {
-      const busId = Number(node.id.replace('node-', '')) - 1;
-      const bus = backendGrid.buses.find((item) => item.id === busId);
-      if (!bus) return node;
-
-      const loadPercent = node.capacityMW > 0
-        ? Math.min(100, Math.max(0, (bus.load_mw / node.capacityMW) * 100))
-        : 0;
-      const voltageOutOfRange = bus.voltage_pu < 0.95 || bus.voltage_pu > 1.05;
-
-      return {
-        ...node,
-        // Electrical measurements come from pandapower, not the mock simulation.
-        voltageKV: bus.nominal_voltage_kv * bus.voltage_pu,
-        generationMW: bus.generation_mw,
-        currentLoadMW: bus.load_mw,
-        currentLoad: Math.round(loadPercent),
-        status: voltageOutOfRange ? 'warning' : 'stable',
-      };
-    });
-  }, [backendGrid, nodes]);
-
-  const displayLinks = useMemo<GridLink[]>(() => {
-    if (!backendGrid) return links;
-
-    return backendGrid.lines.map((line) => {
-      const source = `node-${String(line.from_bus + 1).padStart(2, '0')}`;
-      const target = `node-${String(line.to_bus + 1).padStart(2, '0')}`;
-      const previous = links.find(
-        (item) => item.source === source && item.target === target
-          || item.source === target && item.target === source,
-      );
-      const flowMW = Math.abs(line.p_from_mw);
-      // IEEE benchmark line loading is the authoritative status measurement.
-      const status: GridLink['status'] =
-        line.loading_percent >= 80 ? 'congested' : 'normal';
-
-      return {
-        id: `backend-line-${line.id}`,
-        source,
-        target,
-        capacityMW: previous?.capacityMW
-          ?? (line.loading_percent > 0
-            ? flowMW / (line.loading_percent / 100)
-            : Math.max(flowMW, 1)),
-        currentFlowMW: flowMW,
-        status,
-        // Trail visualization remains local/mock until backend trail values are exposed.
-        pheromoneTraces: previous?.pheromoneTraces ?? 0,
-      };
-    });
-  }, [backendGrid, links]);
-
-  const displayMetrics = useMemo<SystemMetrics>(() => ({
-    ...metrics,
-    totalGenerationMW: backendGrid?.total_generation_mw ?? metrics.totalGenerationMW,
-    totalDemandMW: backendGrid?.total_load_mw ?? metrics.totalDemandMW,
-  }), [backendGrid, metrics]);
-
-  // Simulation Parameters
-  const [simParams, setSimParams] = useState<SimulationParams>({
-    speed: 1,
-    isPaused: false,
-    demandFactor: 1.0,
-    renewableSupply: 1.0,
-    agentDensity: 6,
-    decayRate: 0.08,
-    storageReserve: 80,
-  });
-
-  // Helper to add telemetry event
-  const addTelemetry = useCallback((
-    message: string, 
-    severity: TelemetryEvent['severity'] = 'info', 
-    agentId?: string, 
-    zoneId?: string, 
-    signalType?: PheromoneType
-  ) => {
-    const now = new Date();
-    const ms = now.getMilliseconds().toString().padStart(3, '0');
-    const timestamp = `${now.toTimeString().split(' ')[0]}.${ms}`;
-    
-    const newEvent: TelemetryEvent = {
-      id: `tel-${Date.now()}-${Math.random().toString(36).substr(2, 4)}`,
-      timestamp,
-      message,
-      severity,
-      agentId,
-      zoneId,
-      signalType,
-    };
-
-    setTelemetryEvents((prev) => [newEvent, ...prev.slice(0, 99)]);
-  }, []);
-
-  // Action: Trigger Demand Surge at Zone 07 (or 08)
-  const handleTriggerSurge = useCallback(() => {
-    // 1. Spikes demand in Zone 07
-    setNodes((prevNodes) =>
-      prevNodes.map((n) => {
-        if (n.id === 'node-07') {
-          return {
-            ...n,
-            currentLoad: 96,
-            currentLoadMW: 624,
-            status: 'congestion',
-            pheromoneIntensity: 0.98,
-            activePheromoneType: 'DEMAND_SIGNAL',
-          };
-        }
-        if (n.id === 'node-08') {
-          return {
-            ...n,
-            currentLoad: 94,
-            currentLoadMW: 658,
-            status: 'warning',
-            pheromoneIntensity: 0.85,
-            activePheromoneType: 'LOAD_PRESSURE',
-          };
-        }
-        return n;
-      })
-    );
-
-    // 2. Add an expanding dynamic signal wave
-    const surgeSignal: ActiveSignal = {
-      id: `sig-${Date.now()}`,
-      type: 'DEMAND_SIGNAL',
-      originNodeId: 'node-07',
-      radius: 5,
-      maxRadius: 35,
-      intensity: 0.95,
-      decayRate: simParams.decayRate,
-      color: '#EF4444',
-      createdTime: Date.now(),
-    };
-    setActiveSignals((prev) => [...prev, surgeSignal]);
-
-    // 3. Mark feeder corridor as congested
-    setLinks((prevLinks) =>
-      prevLinks.map((l) => {
-        if (l.id === 'link-04-07') {
-          return { ...l, currentFlowMW: 490, status: 'congested', pheromoneTraces: 0.95 };
-        }
-        return l;
-      })
-    );
-
-    // 4. Update Agents to respond to the surge
-    setAgents((prevAgents) =>
-      prevAgents.map((ag) => {
-        if (ag.id === 'AG-04') {
-          return {
-            ...ag,
-            state: 'balancing',
-            action: 'Deposited urgent demand pheromone at Zone 07; propagating impedance penalty',
-            sensedSignal: 'DEMAND_SIGNAL',
-            signalStrength: 98,
-          };
-        }
-        if (ag.id === 'AG-02') {
-          return {
-            ...ag,
-            state: 'rerouting',
-            action: 'Sensed demand pheromone gradient from Zone 07; opening redundant feeder corridor 05-06',
-            sensedSignal: 'DEMAND_SIGNAL',
-            signalStrength: 94,
-          };
-        }
-        if (ag.id === 'AG-03') {
-          return {
-            ...ag,
-            state: 'discharging',
-            action: 'BESS Mega-Storage ramped to 280 MW discharge to mitigate Metro feeder drop',
-            sensedSignal: 'LOAD_PRESSURE',
-            signalStrength: 91,
-          };
-        }
-        return ag;
-      })
-    );
-
-    // 5. Add Telemetry logs
-    addTelemetry(
-      'UNEXPECTED LOAD SURGE: Zone-07 Industrial complex surged to 624 MW (96% capacity).',
-      'alert',
-      'AG-04',
-      'ZONE-07',
-      'DEMAND_SIGNAL'
-    );
-    addTelemetry(
-      'Environmental signal [DEMAND_SIGNAL] deposited on grid cell. Spatial gradient diffusing to Zone-04 and Zone-08.',
-      'warning',
-      'AG-04',
-      'ZONE-07',
-      'DEMAND_SIGNAL'
-    );
-
-    // Schedule self-healing equilibrium after 3 seconds
-    setTimeout(() => {
-      setNodes((prevNodes) =>
-        prevNodes.map((n) => {
-          if (n.id === 'node-07') {
-            return {
-              ...n,
-              currentLoad: 76,
-              currentLoadMW: 494,
-              status: 'stable',
-              pheromoneIntensity: 0.45,
-            };
-          }
-          if (n.id === 'node-08') {
-            return {
-              ...n,
-              currentLoad: 78,
-              currentLoadMW: 546,
-              status: 'stable',
-              pheromoneIntensity: 0.38,
-            };
-          }
-          return n;
-        })
-      );
-
-      setLinks((prevLinks) =>
-        prevLinks.map((l) => {
-          if (l.id === 'link-04-07') {
-            return { ...l, currentFlowMW: 380, status: 'normal', pheromoneTraces: 0.4 };
-          }
-          return l;
-        })
-      );
-
-      addTelemetry(
-        'STIGMERGIC EQUILIBRIUM: AG-02 & AG-03 dispersed surge power across dual corridors. Zone-07 thermal load reduced to 76%.',
-        'success',
-        'AG-02',
-        'ZONE-07',
-        'DEMAND_SIGNAL'
-      );
-    }, 4500);
-  }, [addTelemetry, simParams.decayRate]);
-
-  // Action: Inject specific signal on any node
-  const handleInjectSignal = useCallback((nodeId: string, type: PheromoneType) => {
-    const targetNode = nodes.find((n) => n.id === nodeId);
-    if (!targetNode) return;
-
-    let color = '#38BDF8';
-    if (type === 'DEMAND_SIGNAL') color = '#EF4444';
-    if (type === 'LOAD_PRESSURE') color = '#F59E0B';
-    if (type === 'ENERGY_SURPLUS') color = '#06B6D4';
-    if (type === 'AVAILABLE_CAPACITY') color = '#10B981';
-
-    const newSig: ActiveSignal = {
-      id: `sig-${Date.now()}-${Math.random().toString(36).substr(2, 3)}`,
-      type,
-      originNodeId: nodeId,
-      radius: 4,
-      maxRadius: 32,
-      intensity: 0.9,
-      decayRate: simParams.decayRate,
-      color,
-      createdTime: Date.now(),
-    };
-
-    setActiveSignals((prev) => [...prev, newSig]);
-
-    // Intensify node pheromone value
-    setNodes((prev) =>
-      prev.map((n) =>
-        n.id === nodeId
-          ? {
-              ...n,
-              pheromoneIntensity: Math.min(1.0, n.pheromoneIntensity + 0.4),
-              activePheromoneType: type,
-            }
-          : n
-      )
-    );
-
-    addTelemetry(
-      `Environmental signal [${type}] injected at ${targetNode.zoneCode} (${targetNode.name}). Gradient radiating to neighbor buses.`,
-      type === 'DEMAND_SIGNAL' ? 'warning' : 'info',
-      undefined,
-      targetNode.zoneCode,
-      type
-    );
-  }, [nodes, simParams.decayRate, addTelemetry]);
-
-  // Action: Apply predefined scenario
-  const handleApplyScenario = useCallback((scenarioName: string) => {
-    if (scenarioName === 'peak-ev') {
-      handleTriggerSurge();
-      addTelemetry('SCENARIO APPLIED: Peak Evening EV Surge across metropolitan depots.', 'warning');
-    } else if (scenarioName === 'solar-drop') {
-      setNodes((prev) =>
-        prev.map((n) =>
-          n.id === 'node-01'
-            ? { ...n, generationMW: 140, currentLoad: 68, status: 'warning', energyLevel: 35 }
-            : n
-        )
-      );
-      handleInjectSignal('node-01', 'DEMAND_SIGNAL');
-      addTelemetry('SCENARIO APPLIED: Rapid solar intermittency drop (-65% irradiance).', 'warning', 'AG-05', 'ZONE-01');
-    } else if (scenarioName === 'line-trip') {
-      setLinks((prev) =>
-        prev.map((l) =>
-          l.id === 'link-05-08'
-            ? { ...l, currentFlowMW: 0, status: 'congested', pheromoneTraces: 1.0 }
-            : l
-        )
-      );
-      handleInjectSignal('node-05', 'CONGESTION_GRADIENT');
-      addTelemetry('SCENARIO APPLIED: Transmission Corridor 05-08 tripped. Congestion repulsion diverted power.', 'alert', 'AG-04');
-    } else if (scenarioName === 'steady-state') {
-      setNodes(INITIAL_NODES);
-      setLinks(INITIAL_LINKS);
-      setAgents(INITIAL_AGENTS);
-      setActiveSignals([]);
-      addTelemetry('SCENARIO APPLIED: Nominal Grid Equilibrium restored across all 16 zones.', 'success');
-    }
-  }, [handleTriggerSurge, handleInjectSignal, addTelemetry]);
-
-  // Reset grid state to nominal
-  const handleResetGrid = useCallback(() => {
-    setNodes(INITIAL_NODES);
-    setLinks(INITIAL_LINKS);
-    setAgents(INITIAL_AGENTS);
-    setActiveSignals([]);
-    setMetrics(INITIAL_METRICS);
-    setSelectedNode(null);
-    addTelemetry('SYSTEM RESET: Grid topology and agent swarm restored to factory nominal.', 'info');
-  }, [addTelemetry]);
-
-  // Real-time Simulation Engine Tick (every 1s)
+  // Read-only polling is sequential; a slow request cannot overlap the next poll.
   useEffect(() => {
-    if (simParams.isPaused) return;
+    let active = true;
+    let timer: number | undefined;
 
-    const intervalTime = 1200 / simParams.speed;
+    const poll = async () => {
+      if (!active || pollingPaused) return;
+      if (readInFlight.current) {
+        timer = window.setTimeout(() => void poll(), 250);
+        return;
+      }
+      readInFlight.current = true;
+      try {
+        const [gridState, agentState] = await Promise.all([getGridState(), getAgentState()]);
+        if (!active) return;
+        applyGridSnapshot(gridState);
+        setAgents(mapAgents(agentState.agents));
+        setBackendStatus('connected');
+        setBackendError('');
+        setLastBackendUpdate(new Date());
+      } catch (error) {
+        if (!active) return;
+        setBackendStatus('error');
+        setBackendError(error instanceof Error ? error.message : 'Unable to connect to backend');
+      } finally {
+        readInFlight.current = false;
+        if (active) timer = window.setTimeout(() => void poll(), 5000);
+      }
+    };
 
-    const interval = setInterval(() => {
-      // 1. Decays active dynamic signals
-      setActiveSignals((prevSignals) =>
-        prevSignals
-          .map((sig) => ({
-            ...sig,
-            radius: sig.radius + 1.2 * simParams.speed,
-            intensity: sig.intensity - sig.decayRate * simParams.speed,
-          }))
-          .filter((sig) => sig.intensity > 0.05 && sig.radius < sig.maxRadius)
-      );
+    void poll();
+    return () => {
+      active = false;
+      if (timer !== undefined) window.clearTimeout(timer);
+    };
+  }, [applyGridSnapshot, pollingPaused]);
 
-      // 2. Modulate node state values with natural fluctuations & parameters
-      setNodes((prevNodes) =>
-        prevNodes.map((node) => {
-          // Slight natural thermal load jitter
-          const jitter = (Math.random() - 0.5) * 2;
-          const adjustedLoad = Math.min(
-            100,
-            Math.max(10, Math.round(node.currentLoad * simParams.demandFactor + jitter))
-          );
+  const handleRunTick = useCallback(async () => {
+    if (tickInFlight.current || readInFlight.current || backendStatus !== 'connected') return;
+    tickInFlight.current = true;
+    setTickPending(true);
+    try {
+      const result = await runCoordinationTick();
+      applyGridSnapshot(result.grid);
+      setAgents(mapAgents(result.agents, result.proposal_diagnostics));
+      setDiagnostics(result.proposal_diagnostics);
+      setTick(result.tick);
+      setBackendStatus('connected');
+      setBackendError('');
+      setLastBackendUpdate(new Date());
+    } catch (error) {
+      setBackendStatus('error');
+      setBackendError(error instanceof Error ? error.message : 'Coordination tick failed');
+    } finally {
+      tickInFlight.current = false;
+      setTickPending(false);
+    }
+  }, [applyGridSnapshot, backendStatus]);
 
-          // Pheromone natural decay
-          const newPhero = Math.max(0.08, node.pheromoneIntensity - simParams.decayRate * 0.1);
+  const displayNodes = useMemo<GridNode[]>(() => INITIAL_NODES.map((layoutNode, index) => {
+    const busId = index;
+    const bus = grid?.buses.find((candidate) => candidate.id === busId);
+    const agent = agents.find((candidate) => candidate.currentZoneId === layoutNode.id);
+    const demandTrail = (agent as (Agent & { trailDemandSignal?: number }) | undefined)?.trailDemandSignal ?? 0;
+    const surplusTrail = (agent as (Agent & { trailEnergySurplus?: number }) | undefined)?.trailEnergySurplus ?? 0;
+    const sensedType = demandTrail === 0 && surplusTrail === 0
+      ? undefined
+      : demandTrail >= surplusTrail ? 'DEMAND_SIGNAL' : 'ENERGY_SURPLUS';
+    return {
+      ...layoutNode,
+      id: busNodeId(busId),
+      name: `IEEE-14 Bus ${busId}`,
+      zoneCode: `BUS-${String(busId).padStart(2, '0')}`,
+      type: 'substation',
+      energyLevel: undefined,
+      capacityMW: undefined,
+      currentLoad: undefined,
+      currentLoadMW: bus?.load_mw,
+      generationMW: bus?.generation_mw,
+      incomingMW: undefined,
+      outgoingMW: undefined,
+      voltagePU: bus?.voltage_pu,
+      voltageKV: bus ? bus.voltage_pu * bus.nominal_voltage_kv : undefined,
+      status: bus && (bus.voltage_pu < 0.95 || bus.voltage_pu > 1.05) ? 'warning' : 'stable',
+      pheromoneIntensity: Math.max(demandTrail, surplusTrail),
+      activePheromoneType: sensedType,
+      assignedAgentId: agent?.id,
+    };
+  }), [agents, grid]);
 
-          return {
-            ...node,
-            currentLoad: adjustedLoad,
-            pheromoneIntensity: newPhero,
-          };
-        })
-      );
+  const displayLinks = useMemo<GridLink[]>(() => (grid?.lines ?? []).map((line) => {
+    const forward = line.p_from_mw >= 0;
+    return {
+      id: `line-${line.id}`,
+      source: busNodeId(forward ? line.from_bus : line.to_bus),
+      target: busNodeId(forward ? line.to_bus : line.from_bus),
+      currentFlowMW: Math.abs(line.p_from_mw),
+      capacityMW: undefined,
+      loadingPercent: line.loading_percent,
+      pheromoneTraces: 0,
+      status: line.loading_percent >= 100 ? 'congested' : 'normal',
+    };
+  }), [grid]);
 
-      // 3. Modulate aggregate frequency and metrics
-      setMetrics((prev) => {
-        const delta = (Math.random() - 0.5) * 0.008;
-        return {
-          ...prev,
-          frequencyHz: Math.max(49.97, Math.min(50.03, 50.015 + delta)),
-          gridEfficiency: parseFloat((98.2 + (Math.random() - 0.5) * 0.4).toFixed(1)),
-          totalDemandMW: Math.round(1410 * simParams.demandFactor),
-          totalGenerationMW: Math.round(1570 * simParams.renewableSupply),
-        };
-      });
-    }, intervalTime);
+  const metrics = useMemo<SystemMetrics>(() => ({
+    totalGenerationMW: grid?.total_generation_mw,
+    totalDemandMW: grid?.total_load_mw,
+    activeAgentsCount: agents.length || undefined,
+    minVoltagePU: grid?.min_voltage_pu,
+    maxVoltagePU: grid?.max_voltage_pu,
+    maxLineLoadingPercent: grid?.max_line_loading_percent,
+    converged: grid?.converged,
+  }), [agents.length, grid]);
 
-    return () => clearInterval(interval);
-  }, [simParams]);
+  const selectedNode = selectedNodeId
+    ? displayNodes.find((node) => node.id === selectedNodeId) ?? null
+    : null;
 
-  // Navigation scroll handler
   const handleNavigateToSection = (sectionId: string) => {
     setActiveTab(sectionId);
-    const element = document.getElementById(sectionId);
-    if (element) {
-      element.scrollIntoView({ behavior: 'smooth' });
-    }
+    document.getElementById(sectionId)?.scrollIntoView({ behavior: 'smooth' });
   };
 
   return (
-    <div className="min-h-screen bg-slate-50 text-slate-900 flex flex-col">
-      {/* Live backend connection and IEEE-14 power-flow telemetry */}
-      <section className="border-b border-slate-700 bg-slate-950 px-4 py-3 text-white">
+    <div className="min-h-screen bg-white text-slate-900 flex flex-col">
+      <section className="border-b border-slate-200 bg-slate-50 px-4 py-3 text-slate-800">
         <div className="mx-auto flex max-w-7xl flex-wrap items-center justify-between gap-3">
           <div className="flex items-center gap-2">
-            <span
-              className={`h-2.5 w-2.5 rounded-full ${
-                backendStatus === 'connected'
-                  ? 'bg-emerald-400'
-                  : backendStatus === 'error'
-                    ? 'bg-red-400'
-                    : 'bg-amber-400'
-              }`}
-            />
-            <span className="text-sm font-semibold">
-              Backend: {backendStatus.toUpperCase()}
-            </span>
-            <span className="text-xs text-slate-400">
-              IEEE-14 power-flow model
-            </span>
+            <span className={`h-2 w-2 rounded-full ${backendStatus === 'connected' ? 'bg-emerald-500' : backendStatus === 'error' ? 'bg-red-500' : 'bg-amber-500'}`} />
+            <span className="text-sm font-semibold">Backend {backendStatus}</span>
+            <span className="text-xs text-slate-400">IEEE-14 power-flow model</span>
+            {tick !== null && <span className="text-xs text-slate-400">Coordination tick: {tick}</span>}
           </div>
-
-          {backendGrid && (
-            <div className="flex flex-wrap gap-x-5 gap-y-2 text-xs text-slate-300">
-              <span> Buses: <strong>{backendGrid.bus_count}</strong> </span>
-              <span> Lines: <strong>{backendGrid.line_count}</strong> </span>
-              <span>
-                Generation: <strong>{backendGrid.total_generation_mw.toFixed(2)} MW</strong>
-              </span>
-              <span>
-                Load: <strong>{backendGrid.total_load_mw.toFixed(2)} MW</strong>
-              </span>
-              <span>
-                Voltage range: <strong>{backendGrid.min_voltage_pu.toFixed(3)}–{backendGrid.max_voltage_pu.toFixed(3)} pu</strong>
-              </span>
-              <span>
-                Power flow: <strong>{backendGrid.converged ? 'CONVERGED' : 'NOT CONVERGED'}</strong>
-              </span>
-            </div>
-          )}
-
-          {backendStatus === 'error' && (
-            <p className="w-full text-xs text-red-300">{backendError}</p>
-          )}
-
-          {lastBackendUpdate && (
-            <p className="w-full text-xs text-slate-500">
-              Last successful update: {lastBackendUpdate.toLocaleTimeString()}
-            </p>
-          )}
+          {backendStatus === 'error' && <p className="w-full text-xs text-red-700">{backendError}{grid ? ' Showing last successful snapshot.' : ''}</p>}
+          {backendStatus === 'connecting' && <p className="w-full text-xs text-amber-700">Connecting to FastAPI. Measurements are not available yet.</p>}
+          {lastBackendUpdate && <p className="w-full text-xs text-slate-500">Updated {lastBackendUpdate.toLocaleTimeString()}</p>}
         </div>
       </section>
 
-      {/* Strict 3-zone Header */}
       <Header
         activeTab={activeTab}
         onSelectTab={handleNavigateToSection}
-        frequencyHz={displayMetrics.frequencyHz}
-        isPaused={simParams.isPaused}
-        onTogglePause={() => setSimParams((p) => ({ ...p, isPaused: !p.isPaused }))}
-        onResetGrid={handleResetGrid}
-        onTriggerSurge={handleTriggerSurge}
+        frequencyHz={undefined}
+        isPaused={pollingPaused}
+        onTogglePause={() => setPollingPaused((paused) => !paused)}
+        onResetGrid={() => void refreshBackend()}
+        onTriggerSurge={() => void handleRunTick()}
+        tickPending={tickPending}
       />
 
       <main className="flex-1">
-        {/* 1. Hero Section: "STIGMERGIC SMART GRID" with living interactive Grid Canvas */}
-        <HeroSection
-          nodes={displayNodes}
-          links={displayLinks}
-          agents={agents}
-          activeSignals={activeSignals}
-          selectedNodeId={selectedNode ? selectedNode.id : null}
-          onSelectNode={setSelectedNode}
-          showPheromones={showPheromones}
-          showEnergyFlow={showEnergyFlow}
-          showAgents={showAgents}
-          onTogglePheromones={() => setShowPheromones(!showPheromones)}
-          onToggleEnergyFlow={() => setShowEnergyFlow(!showEnergyFlow)}
-          onToggleAgents={() => setShowAgents(!showAgents)}
-          onInjectSignal={handleInjectSignal}
-          onTriggerSurge={handleTriggerSurge}
-          onNavigateToSection={handleNavigateToSection}
-        />
-
-        {/* 2. Live Interactive Smart Grid Map Stage with Telemetry Terminal */}
+        <section id="overview" className="min-h-[58vh] flex items-center border-b border-slate-200 bg-white">
+          <div className="mx-auto w-full max-w-5xl px-6 py-20">
+            <p className="mb-4 text-xs font-semibold uppercase tracking-[0.18em] text-blue-700">Research prototype · IEEE-14</p>
+            <h1 className="max-w-3xl text-4xl font-semibold tracking-tight text-slate-950 sm:text-5xl">StigGrid: stigmergic coordination for power systems</h1>
+            <p className="mt-6 max-w-2xl text-lg leading-8 text-slate-600">Bus agents sense local voltage and shared decaying trails. Proposed generator setpoints are evaluated by a SafetyGate before accepted changes are applied.</p>
+            <p className="mt-5 text-sm text-slate-500">Use Grid to inspect live measurements and Agents to review the current agent states. Coordination ticks are requested explicitly.</p>
+            <button onClick={() => handleNavigateToSection('live-grid')} className="mt-8 border border-blue-700 px-4 py-2 text-sm font-medium text-blue-800 hover:bg-blue-50">Open grid</button>
+          </div>
+        </section>
         <SmartGridMapSection
-          nodes={displayNodes}
-          links={displayLinks}
-          agents={agents}
-          activeSignals={activeSignals}
-          selectedNode={selectedNode ? (displayNodes.find((node) => node.id === selectedNode.id) ?? selectedNode) : null}
-          onSelectNode={setSelectedNode}
-          showPheromones={showPheromones}
-          showEnergyFlow={showEnergyFlow}
-          showAgents={showAgents}
-          onTogglePheromones={() => setShowPheromones(!showPheromones)}
-          onToggleEnergyFlow={() => setShowEnergyFlow(!showEnergyFlow)}
-          onToggleAgents={() => setShowAgents(!showAgents)}
-          onInjectSignal={handleInjectSignal}
-          telemetryEvents={telemetryEvents}
-          onClearEvents={() => setTelemetryEvents([])}
-          onTriggerSurge={handleTriggerSurge}
+          nodes={displayNodes} links={displayLinks} agents={agents}
+          selectedNode={selectedNode} onSelectNode={(node) => setSelectedNodeId(node?.id ?? null)}
+          showPheromones={showPheromones} showEnergyFlow={showEnergyFlow} showAgents={showAgents}
+          onTogglePheromones={() => setShowPheromones((value) => !value)}
+          onToggleEnergyFlow={() => setShowEnergyFlow((value) => !value)}
+          onToggleAgents={() => setShowAgents((value) => !value)}
+          onTriggerSurge={() => void handleRunTick()} tickPending={tickPending}
         />
-
-        {/* 3. Stigmergic Environmental Coordination Engine (6-Step Lifecycle) */}
-        <StigmergyVisualizer
-          onTriggerSurge={handleTriggerSurge}
-          onInjectSignal={handleInjectSignal}
-        />
-
-        {/* 4. Control Room Operations Dashboard & Precision Graphs */}
-        <ControlDashboard
-          metrics={displayMetrics}
-          nodes={displayNodes}
-          onSelectNode={(node) => {
-            setSelectedNode(node);
-            handleNavigateToSection('live-grid');
-          }}
-        />
-
-       
-
-        
-
-        
-
-        
+        <ControlDashboard metrics={metrics} history={history} />
+        <AgentNetwork agents={agents} nodes={displayNodes} onSelectNode={(node) => {
+          if (!node) return;
+          setSelectedNodeId(node.id);
+          handleNavigateToSection('live-grid');
+        }} />
+        <StigmergyVisualizer />
+        <section id="decisions" className="scroll-mt-20 border-b border-slate-200 bg-white py-10" aria-live="polite">
+          <div className="mx-auto max-w-7xl px-4 sm:px-6 lg:px-8">
+            <p className="text-xs font-semibold uppercase tracking-wider text-blue-700">05 · Safety and decisions</p>
+            <h2 className="mt-1 text-2xl font-semibold tracking-tight text-slate-950">Latest coordination tick</h2>
+            <p className="mt-2 text-sm text-slate-600">Decisions, proposal outcomes, and reasons. Trail readings were sensed before this tick's deposits.</p>
+            {diagnostics.length === 0 ? <p className="mt-3 text-sm text-slate-500">Run a coordination tick to load agent decisions and proposal outcomes.</p> : (
+              <div className="mt-3 overflow-x-auto rounded border border-slate-200 bg-white">
+                <table className="w-full text-left text-xs">
+                  <thead className="bg-slate-100 font-mono uppercase text-slate-500"><tr><th className="p-2">Agent / Bus</th><th className="p-2">Decision</th><th className="p-2">Trail sensed (demand / surplus)</th><th className="p-2">Proposal</th><th className="p-2">Reason</th></tr></thead>
+                  <tbody>{diagnostics.map((item) => <tr key={item.agent_id} className="border-t border-slate-100"><td className="p-2 font-mono">{item.agent_id} / BUS-{String(item.bus_id).padStart(2, '0')}</td><td className="p-2">{item.decision}</td><td className="p-2 font-mono">{item.trail_sensed.demand.toFixed(4)} / {item.trail_sensed.energy_surplus.toFixed(4)}</td><td className="p-2 uppercase">{item.status}{item.proposal_status ? ` / ${item.proposal_status}` : ''}</td><td className="p-2">{item.reason}{item.trail_deposited ? `; deposited for later ticks: ${item.trail_deposited}` : ''}</td></tr>)}</tbody>
+                </table>
+              </div>
+            )}
+          </div>
+        </section>
       </main>
-
-      {/* Clean Academic Footer */}
       <Footer />
     </div>
   );

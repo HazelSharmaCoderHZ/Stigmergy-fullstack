@@ -18,16 +18,17 @@ export interface GridNode {
   type: GridNodeType;
   x: number; // 0-100 relative coordinate on map canvas
   y: number; // 0-100 relative coordinate on map canvas
-  energyLevel: number; // 0 - 100%
-  currentLoad: number; // 0 - 100%
-  capacityMW: number;
-  currentLoadMW: number;
-  generationMW: number;
-  incomingMW: number;
-  outgoingMW: number;
-  voltageKV: number;
+  energyLevel?: number; // Not exposed by the current backend
+  currentLoad?: number; // Percentage requires a rated-load field
+  capacityMW?: number; // Not exposed by the current backend
+  currentLoadMW?: number;
+  generationMW?: number;
+  incomingMW?: number;
+  outgoingMW?: number;
+  voltageKV?: number;
+  voltagePU?: number;
   status: NodeStatus;
-  pheromoneIntensity: number; // 0.0 - 1.0
+  pheromoneIntensity: number; // Agent-sensed neighborhood intensity, when available
   activePheromoneType?: PheromoneType;
   assignedAgentId?: string;
 }
@@ -36,8 +37,9 @@ export interface GridLink {
   id: string;
   source: string; // node ID
   target: string; // node ID
-  capacityMW: number;
+  capacityMW?: number;
   currentFlowMW: number;
+  loadingPercent?: number;
   status: 'normal' | 'congested' | 'rerouted' | 'fault';
   pheromoneTraces: number; // 0.0 - 1.0 (digital trail on line)
 }
@@ -62,15 +64,9 @@ export interface ActiveSignal {
   createdTime: number;
 }
 
-export type AgentRole = 
-  | 'Grid Monitor' 
-  | 'Energy Distributor' 
-  | 'Storage Manager' 
-  | 'Load Balancer' 
-  | 'Demand Predictor'
-  | 'Renewable Harvester';
+export type AgentRole = string;
 
-export type AgentState = 'sensing' | 'signaling' | 'rerouting' | 'balancing' | 'discharging';
+export type AgentState = string;
 
 export interface Agent {
   id: string;
@@ -79,10 +75,10 @@ export interface Agent {
   currentZoneId: string;
   state: AgentState;
   action: string;
-  sensedSignal?: PheromoneType;
+  sensedSignal?: string | null;
   signalStrength: number; // 0 - 100%
-  lastZoneVisited: string;
-  adaptationScore: number; // efficiency rating
+  lastZoneVisited?: string;
+  adaptationScore?: number; // Not currently produced by the backend
 }
 
 export interface TelemetryEvent {
@@ -107,12 +103,16 @@ export interface SimulationParams {
 }
 
 export interface SystemMetrics {
-  totalGenerationMW: number;
-  totalDemandMW: number;
-  gridEfficiency: number;
-  activeAgentsCount: number;
-  signalDensity: number;
-  frequencyHz: number;
-  congestionRate: number;
-  carbonIntensity: number;
+  totalGenerationMW?: number;
+  totalDemandMW?: number;
+  gridEfficiency?: number;
+  activeAgentsCount?: number;
+  signalDensity?: number;
+  frequencyHz?: number;
+  congestionRate?: number;
+  carbonIntensity?: number;
+  minVoltagePU?: number;
+  maxVoltagePU?: number;
+  maxLineLoadingPercent?: number;
+  converged?: boolean;
 }
