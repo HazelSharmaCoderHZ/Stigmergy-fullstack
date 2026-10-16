@@ -56,6 +56,7 @@ function mapAgents(
 }
 
 export default function App() {
+  const [showLoader, setShowLoader] = useState(true);
   // INITIAL_NODES supplies only the existing canvas coordinates and styling.
   const [grid, setGrid] = useState<BackendGridState | null>(null);
   const [agents, setAgents] = useState<Agent[]>([]);
@@ -213,6 +214,19 @@ export default function App() {
 
   return (
     <div className="min-h-screen bg-white text-slate-900 flex flex-col">
+      {showLoader && (
+        <div className="fixed inset-0 z-[100] bg-black">
+          <video
+            className="h-full w-full object-cover"
+            src="/loader.mp4"
+            autoPlay
+            muted
+            playsInline
+            onEnded={() => setShowLoader(false)}
+            onError={() => setShowLoader(false)}
+          />
+        </div>
+      )}
       <Header
         activeTab={activeTab}
         onSelectTab={handleNavigateToSection}
